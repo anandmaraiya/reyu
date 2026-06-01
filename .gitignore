@@ -5,3 +5,6 @@ venv.bak/
 venv/
 __pycache__/
 *.pyc
+# AI context - these ARE committed (they are the docs)
+# To exclude: uncomment below
+# ai-context/

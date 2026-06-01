@@ -16,7 +16,7 @@ echo "🔧 Installing AI context system..."
 # ── 1. Copy scripts ────────────────────────────────────────────────────────
 
 mkdir -p "$REPO_ROOT/scripts"
-cp "$(dirname "$0")/scripts/context_generator.py" "$REPO_ROOT/scripts/"
+cp "$(dirname "$0")/context_generator.py" "$REPO_ROOT/scripts/"
 chmod +x "$REPO_ROOT/scripts/context_generator.py"
 echo "   ✅ scripts/context_generator.py installed"
 
@@ -24,7 +24,7 @@ echo "   ✅ scripts/context_generator.py installed"
 
 HOOK_DIR="$REPO_ROOT/.git/hooks"
 mkdir -p "$HOOK_DIR"
-cp "$(dirname "$0")/scripts/pre-push.hook" "$HOOK_DIR/pre-push"
+cp "$(dirname "$0")/pre-push.hook" "$HOOK_DIR/pre-push"
 chmod +x "$HOOK_DIR/pre-push"
 echo "   ✅ .git/hooks/pre-push installed"
 
@@ -32,7 +32,7 @@ echo "   ✅ .git/hooks/pre-push installed"
 
 if [[ -d "$REPO_ROOT/.github" ]]; then
   mkdir -p "$REPO_ROOT/.github/workflows"
-  cp "$(dirname "$0")/.github/workflows/update-ai-context.yml" \
+  cp "$(dirname "$0")/update-ai-context.yml" \
      "$REPO_ROOT/.github/workflows/" 2>/dev/null && \
     echo "   ✅ .github/workflows/update-ai-context.yml installed" || \
     echo "   ⚠️  GitHub Actions workflow not found — skipping"
