@@ -13,15 +13,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setItems(prev => [...prev, { id, kind, msg }])
     setTimeout(() => setItems(prev => prev.filter(t => t.id !== id)), 4500)
   }, [])
+
   return (
     <ToastCtx.Provider value={{ push }}>
       {children}
-      <div style={{ position: 'fixed', top: 12, right: 12, zIndex: 200, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div className="toast-root">
         {items.map(t => (
-          <div key={t.id} className="card" style={{
-            minWidth: 220, padding: '8px 12px', fontSize: 13,
-            borderLeft: `3px solid ${t.kind === 'error' ? 'var(--red)' : t.kind === 'success' ? 'var(--green)' : 'var(--accent)'}`,
-          }}>{t.msg}</div>
+          <div key={t.id} className={`toast-card toast-${t.kind}`}>
+            <div className="toast-body">
+              <span className="toast-icon">{t.kind === 'success' ? '✔' : t.kind === 'error' ? '✖' : 'ℹ'}</span>
+              <div className="toast-message">{t.msg}</div>
+            </div>
+            <div className="toast-progress" />
+          </div>
         ))}
       </div>
     </ToastCtx.Provider>

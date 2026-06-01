@@ -2,7 +2,7 @@ import { Chain } from '../api'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 
 export default function OIChart({ chain }: { chain: Chain }) {
-  const data = chain.strikes.map(s => ({
+  const data = chain?.strikes.map(s => ({
     strike: s.strike,
     'CE OI': s.ce?.oi || 0,
     'PE OI': s.pe?.oi || 0,

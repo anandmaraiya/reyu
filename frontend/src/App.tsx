@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { NavLink, Route, Routes, Navigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from './api'
 import Dashboard from './pages/Dashboard'
@@ -17,37 +17,64 @@ import CommandPalette from './CommandPalette'
 
 type Status = { fyers: boolean; demo_mode: boolean; redis: boolean; postgres: boolean; last_snapshot_at: string | null; tracked_symbols: number }
 
-const NAV = [
+type NavItem = { to: string; label: string; icon: JSX.Element }
+
+type NavGroup = { group: string; items: NavItem[] }
+
+const NAV: NavGroup[] = [
   { group: 'Trade', items: [
-    { to: '/dashboard', label: 'Option Chain' },
-    { to: '/strategy', label: 'Strategy Builder' },
-    { to: '/compare', label: 'Compare Strategies' },
-    { to: '/positions', label: 'Positions' },
-    { to: '/scalping', label: 'Scalping' },
+    { to: '/dashboard', label: 'Option Chain', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 17h4V7H4z"/><path d="M10 17h4V4h-4z"/><path d="M16 17h4V11h-4z"/></svg> },
+    { to: '/strategy', label: 'Strategy Builder', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M11 18h6"/></svg> },
+    { to: '/compare', label: 'Compare Strategies', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h6v12H4z"/><path d="M14 9h6v9h-6z"/></svg> },
+    { to: '/positions', label: 'Positions', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19h16"/><path d="M7 15l3-3 2 2 5-5"/><path d="M8 11V7h8v2"/></svg> },
+    { to: '/scalping', label: 'Scalping', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M6 18l6-6 6 6"/><path d="M6 6l6 6 6-6"/></svg> },
   ]},
   { group: 'Manage', items: [
-    { to: '/watchlists', label: 'Watchlists' },
-    { to: '/portfolios', label: 'Portfolios' },
-    { to: '/saved', label: 'Saved Strategies' },
-    { to: '/audit', label: 'Order Audit' },
+    { to: '/watchlists', label: 'Watchlists', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg> },
+    { to: '/portfolios', label: 'Portfolios', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16v4H4z"/><path d="M4 14h6v4H4z"/><path d="M14 14h6v4h-6z"/></svg> },
+    { to: '/saved', label: 'Saved Strategies', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16v14H4z"/><path d="M8 9h8"/><path d="M8 13h5"/></svg> },
+    { to: '/audit', label: 'Order Audit', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg> },
   ]},
   { group: 'Account', items: [
-    { to: '/login', label: 'Fyers Auth' },
-    { to: '/settings', label: 'Settings' },
+    { to: '/login', label: 'Fyers Auth', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5a3 3 0 0 1 3 3v4a3 3 0 1 1-6 0V8a3 3 0 0 1 3-3z"/><path d="M5 21h14"/></svg> },
+    { to: '/settings', label: 'Settings', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.7l.1.1a2 2 0 0 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.7-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 0 1-4 0v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.7.3l-.1.1a2 2 0 0 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.7 1.7 1.7 0 0 0-1.6-1H3a2 2 0 0 1 0-4h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.7l-.1-.1a2 2 0 0 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.7.3h.2A1.7 1.7 0 0 0 10 3.6V3a2 2 0 0 1 4 0v.2a1.7 1.7 0 0 0 1 1.6h.2a1.7 1.7 0 0 0 1.7-.3l.1-.1a2 2 0 0 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.7v.2a1.7 1.7 0 0 0 1.6 1H21a2 2 0 0 1 0 4h-.2a1.7 1.7 0 0 0-1.6 1z"/></svg> },
   ]},
+]
+
+const TICKERS = [
+  { symbol: 'NIFTY', value: '23,780', change: '+0.4%' },
+  { symbol: 'BANKNIFTY', value: '55,240', change: '+0.9%' },
+  { symbol: 'FINNIFTY', value: '24,120', change: '+0.2%' },
 ]
 
 function StatusDot({ ok, label }: { ok: boolean; label: string }) {
   return (
-    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-      <span style={{ width: 8, height: 8, borderRadius: 4, background: ok ? 'var(--green)' : 'var(--red)' }} />
+    <span className="sidebar-status">
+      <span className={`status-dot ${ok ? 'ok' : 'err'}`} />
       {label}
     </span>
   )
 }
 
+const PAGE_TITLE_MAP: Record<string, string> = {
+  '/dashboard': 'Option Chain',
+  '/strategy': 'Strategy Builder',
+  '/compare': 'Compare Strategies',
+  '/positions': 'Positions',
+  '/watchlists': 'Watchlists',
+  '/portfolios': 'Portfolios',
+  '/scalping': 'Scalping',
+  '/saved': 'Saved Strategies',
+  '/audit': 'Order Audit',
+  '/settings': 'Settings',
+  '/login': 'Login',
+}
+
 export default function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('theme') as any) || 'dark')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const location = useLocation()
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     localStorage.setItem('theme', theme)
@@ -59,53 +86,122 @@ export default function App() {
     refetchInterval: 10000,
   })
 
+  const pageTitle = useMemo(() => PAGE_TITLE_MAP[location.pathname] ?? 'Dashboard', [location.pathname])
+  const breadcrumb = useMemo(() => ['Home', pageTitle], [pageTitle])
+
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
+  const toggleSidebar = () => setSidebarCollapsed(v => !v)
 
   return (
-    <div className="app">
+    <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <aside className="sidebar">
-        <h1>Reyu</h1>
-        {NAV.map(g => (
-          <div key={g.group} style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{g.group}</div>
-            <nav>
-              {g.items.map(i => (
-                <NavLink key={i.to} to={i.to} className={({ isActive }) => isActive ? 'active' : ''}>{i.label}</NavLink>
-              ))}
-            </nav>
+        <div className="sidebar-header">
+          <div>
+            <div className="sidebar-logo">Reyu</div>
+            <div className="sidebar-tag">Premium</div>
           </div>
-        ))}
-        <div style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <StatusDot ok={!!status?.fyers} label={status?.fyers ? 'Fyers connected' : 'DEMO MODE'} />
-          <StatusDot ok={!!status?.redis} label="Redis" />
-          <StatusDot ok={!!status?.postgres} label="Postgres" />
-          <div style={{ fontSize: 10, color: 'var(--muted)' }}>
-            {status?.tracked_symbols ?? 0} tracked · {status?.last_snapshot_at ? new Date(status.last_snapshot_at).toLocaleTimeString() : '—'}
+          <button type="button" className="sidebar-collapse-btn" onClick={toggleSidebar} aria-label="Toggle sidebar">
+            {sidebarCollapsed ? '➜' : '≡'}
+          </button>
+        </div>
+
+        <div className="sidebar-nav">
+          {NAV.map(g => (
+            <div key={g.group} className="sidebar-group">
+              <div className="sidebar-group-label">{g.group}</div>
+              <nav>
+                {g.items.map(i => (
+                  <NavLink key={i.to} to={i.to} className={({ isActive }) => isActive ? 'active' : ''}>
+                    <span className="nav-icon">{i.icon}</span>
+                    <span>{i.label}</span>
+                  </NavLink>
+                ))}
+              </nav>
+            </div>
+          ))}
+        </div>
+
+        <div className="sidebar-footer">
+          <div className="profile-card">
+            <div className="profile-avatar">R</div>
+            <div>
+              <div className="profile-name">Reyu Trader</div>
+              <div className="profile-meta">Pro Tier</div>
+            </div>
           </div>
-          <button onClick={toggleTheme} style={{ marginTop: 6, fontSize: 11 }}>{theme === 'dark' ? '☼ Light' : '☾ Dark'}</button>
+          <div className="sidebar-status-bar">
+            <StatusDot ok={!!status?.fyers} label={status?.fyers ? 'Fyers live' : 'Demo mode'} />
+            <StatusDot ok={!!status?.redis} label="Redis" />
+            <StatusDot ok={!!status?.postgres} label="Postgres" />
+          </div>
+          <button className="theme-toggle" onClick={toggleTheme}>
+            {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          </button>
         </div>
       </aside>
-      <main className="main">
-        {status?.demo_mode && (
-          <div style={{ padding: '6px 10px', background: 'rgba(245,158,11,0.15)', borderLeft: '3px solid var(--amber)', marginBottom: 12, fontSize: 12, borderRadius: 4 }}>
-            <strong style={{ color: 'var(--amber)' }}>DEMO MODE</strong> — showing synthetic data. <a href="/login">Connect Fyers</a> to switch to live quotes, orders, and positions.
+
+      <div className="main-wrapper">
+        <section className="ticker-strip">
+          {TICKERS.map(item => (
+            <div key={item.symbol} className="ticker-item">
+              <span className="ticker-label">{item.symbol}</span>
+              <span className="ticker-value">{item.value}</span>
+              <span className={`ticker-change ${item.change.startsWith('+') ? 'positive' : 'negative'}`}>{item.change}</span>
+            </div>
+          ))}
+        </section>
+
+        <div className="page-header">
+          <div>
+            <div className="page-title">
+              <span className="page-title-icon">📈</span>
+              {pageTitle}
+            </div>
+            <div className="page-breadcrumb">
+              {breadcrumb.map((part, index) => (
+                <span key={part}>
+                  {part}
+                  {index < breadcrumb.length - 1 && <span>•</span>}
+                </span>
+              ))}
+            </div>
           </div>
-        )}
-        <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/strategy" element={<Strategy />} />
-          <Route path="/compare" element={<Compare />} />
-          <Route path="/positions" element={<Positions />} />
-          <Route path="/watchlists" element={<Watchlists />} />
-          <Route path="/portfolios" element={<Portfolios />} />
-          <Route path="/scalping" element={<Scalping />} />
-          <Route path="/saved" element={<Saved />} />
-          <Route path="/audit" element={<Audit />} />
-          <Route path="/settings" element={<Settings theme={theme} setTheme={setTheme} />} />
-          <Route path="/login" element={<Login />} />
-        </Routes>
-      </main>
+
+          <div className="page-actions">
+            <div className="search-field">
+              <span className="search-icon">🔎</span>
+              <input type="search" placeholder="Search symbol, strategy, alert..." aria-label="Global search" />
+            </div>
+            <button type="button" className="icon-button" aria-label="Notifications">
+              <span>🔔</span>
+              <span className="badge-glow">3</span>
+            </button>
+          </div>
+        </div>
+
+        <main className="main">
+          {status?.demo_mode && (
+            <div className="demo-banner">
+              <strong>DEMO MODE</strong> — showing synthetic data. <a href="/login">Connect Fyers</a> to switch to live quotes, orders, and positions.
+            </div>
+          )}
+          <Routes>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/strategy" element={<Strategy />} />
+            <Route path="/compare" element={<Compare />} />
+            <Route path="/positions" element={<Positions />} />
+            <Route path="/watchlists" element={<Watchlists />} />
+            <Route path="/portfolios" element={<Portfolios />} />
+            <Route path="/scalping" element={<Scalping />} />
+            <Route path="/saved" element={<Saved />} />
+            <Route path="/audit" element={<Audit />} />
+            <Route path="/settings" element={<Settings theme={theme} setTheme={setTheme} />} />
+            <Route path="/login" element={<Login />} />
+          </Routes>
+        </main>
+      </div>
+
       <CommandPalette toggleTheme={toggleTheme} />
     </div>
   )

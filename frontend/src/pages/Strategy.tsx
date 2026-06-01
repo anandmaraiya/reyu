@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { api, Chain } from '../api'
 import PayoffChart from '../components/PayoffChart'
 import { useToast } from '../toast'
@@ -36,6 +37,16 @@ export default function Strategy() {
   const [saveView, setSaveView] = useState('NEUTRAL')
   const [showSend, setShowSend] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const [searchParams] = useSearchParams()
+  const selectedStrikes = useMemo(() => {
+    return searchParams.get('selected')?.split(',').map(s => Number(s)).filter(Boolean) ?? []
+  }, [searchParams])
+
+  useEffect(() => {
+    const underlyingParam = searchParams.get('underlying')
+    if (underlyingParam) setUnderlying(underlyingParam)
+  }, [searchParams])
 
   const { data: chain } = useQuery<Chain>({
     queryKey: ['chain', underlying, strikecount],
@@ -164,23 +175,33 @@ export default function Strategy() {
         </div>
       </div>
 
+      {selectedStrikes.length > 0 && (
+        <div className="card-glass summary-banner" style={{ marginBottom: 12 }}>
+          <strong>{selectedStrikes.length} strike{selectedStrikes.length === 1 ? '' : 's'}</strong> loaded from dashboard.
+          <span style={{ color: 'var(--muted)', marginLeft: 8 }}>Use these strikes as a starting point for your strategy.</span>
+        </div>
+      )}
+
       <div className="row">
         <div className="card col" style={{ flex: 1, maxHeight: 560, overflow: 'auto' }}>
           <h3>Strikes — click B/S to add</h3>
           <table>
             <thead><tr><th colSpan={2}>CE</th><th>LTP</th><th style={{ textAlign: 'center' }}>Strike</th><th>LTP</th><th colSpan={2}>PE</th></tr></thead>
             <tbody>
-              {strikeRows.map(s => (
-                <tr key={s.strike} className={s.strike === atm ? 'atm' : ''}>
-                  <td><button onClick={() => addLeg(s, 'ce', 'BUY')} style={{ background: 'var(--green)', color: '#fff', borderColor: 'transparent', padding: '2px 6px' }} disabled={!s.ce}>B</button></td>
-                  <td><button onClick={() => addLeg(s, 'ce', 'SELL')} style={{ background: 'var(--red)', color: '#fff', borderColor: 'transparent', padding: '2px 6px' }} disabled={!s.ce}>S</button></td>
-                  <td style={{ fontSize: 11 }}>{num(s.ce?.ltp)}</td>
-                  <td style={{ textAlign: 'center', fontWeight: 600 }}>{s.strike}</td>
-                  <td style={{ fontSize: 11 }}>{num(s.pe?.ltp)}</td>
-                  <td><button onClick={() => addLeg(s, 'pe', 'BUY')} style={{ background: 'var(--green)', color: '#fff', borderColor: 'transparent', padding: '2px 6px' }} disabled={!s.pe}>B</button></td>
-                  <td><button onClick={() => addLeg(s, 'pe', 'SELL')} style={{ background: 'var(--red)', color: '#fff', borderColor: 'transparent', padding: '2px 6px' }} disabled={!s.pe}>S</button></td>
-                </tr>
-              ))}
+              {strikeRows.map(s => {
+                const selectedRow = selectedStrikes.includes(s.strike)
+                return (
+                  <tr key={s.strike} className={`${s.strike === atm ? 'atm' : ''} ${selectedRow ? 'selected-row' : ''}`}>
+                    <td><button onClick={() => addLeg(s, 'ce', 'BUY')} style={{ background: 'var(--green)', color: '#fff', borderColor: 'transparent', padding: '2px 6px' }} disabled={!s.ce}>B</button></td>
+                    <td><button onClick={() => addLeg(s, 'ce', 'SELL')} style={{ background: 'var(--red)', color: '#fff', borderColor: 'transparent', padding: '2px 6px' }} disabled={!s.ce}>S</button></td>
+                    <td style={{ fontSize: 11 }}>{num(s.ce?.ltp)}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 600 }}>{s.strike}</td>
+                    <td style={{ fontSize: 11 }}>{num(s.pe?.ltp)}</td>
+                    <td><button onClick={() => addLeg(s, 'pe', 'BUY')} style={{ background: 'var(--green)', color: '#fff', borderColor: 'transparent', padding: '2px 6px' }} disabled={!s.pe}>B</button></td>
+                    <td><button onClick={() => addLeg(s, 'pe', 'SELL')} style={{ background: 'var(--red)', color: '#fff', borderColor: 'transparent', padding: '2px 6px' }} disabled={!s.pe}>S</button></td>
+                  </tr>)
+                })
+              }
             </tbody>
           </table>
         </div>
