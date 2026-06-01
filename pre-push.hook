@@ -1,0 +1,49 @@
+#!/bin/bash
+# .git/hooks/pre-push
+# Auto-generates AI context docs before pushing to main.
+# Install: cp scripts/install-hooks.sh . && bash install-hooks.sh
+
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null)
+TARGET_BRANCH="main"
+
+# Only run on pushes to main (or master)
+if [[ "$BRANCH" != "main" && "$BRANCH" != "master" ]]; then
+  exit 0
+fi
+
+echo "🤖 Updating AI context docs for $BRANCH push..."
+
+# Check Python available
+if ! command -v python3 &>/dev/null; then
+  echo "⚠️  python3 not found — skipping context generation"
+  exit 0
+fi
+
+# Check ANTHROPIC_API_KEY
+if [[ -z "$ANTHROPIC_API_KEY" ]]; then
+  echo "⚠️  ANTHROPIC_API_KEY not set — skipping context generation"
+  echo "   Set it in your shell profile to enable auto-docs."
+  exit 0
+fi
+
+# Run generator (diff-only = skip if no relevant code changed)
+python3 "$(git rev-parse --show-toplevel)/scripts/context_generator.py" --diff-only
+
+EXIT_CODE=$?
+if [[ $EXIT_CODE -ne 0 ]]; then
+  echo "❌ Context generation failed (exit $EXIT_CODE). Push aborted."
+  echo "   Run with: python3 scripts/context_generator.py --dry-run  to debug"
+  exit 1
+fi
+
+# Auto-stage the updated docs if any were changed
+REPO_ROOT=$(git rev-parse --show-toplevel)
+CHANGED=$(git diff --name-only -- "$REPO_ROOT/CLAUDE.md" "$REPO_ROOT/README.md" "$REPO_ROOT/ai-context/")
+
+if [[ -n "$CHANGED" ]]; then
+  git add "$REPO_ROOT/CLAUDE.md" "$REPO_ROOT/README.md" "$REPO_ROOT/ai-context/" 2>/dev/null
+  git commit -m "docs: auto-update AI context [skip ci]" --no-verify 2>/dev/null
+  echo "📄 AI context committed and included in push."
+fi
+
+exit 0

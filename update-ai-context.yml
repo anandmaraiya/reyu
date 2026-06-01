@@ -1,0 +1,45 @@
+name: Update AI Context Docs
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - 'CLAUDE.md'
+      - 'README.md'
+      - 'ai-context/**'
+      - '**.md'
+
+jobs:
+  update-context:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to push the updated docs back
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # need prev commit for diff
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install httpx
+
+      - name: Generate AI context docs
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python3 scripts/context_generator.py --diff-only
+
+      - name: Commit updated docs
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CLAUDE.md README.md ai-context/ || true
+          git diff --staged --quiet || \
+            git commit -m "docs: auto-update AI context [skip ci]"
+          git push

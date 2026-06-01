@@ -1,0 +1,55 @@
+services:
+  backend:
+    build: ./backend
+    container_name: reyu-backend
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+      - reyu-data:/app/data
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: reyu-postgres
+    environment:
+      POSTGRES_USER: reyu
+      POSTGRES_PASSWORD: reyu
+      POSTGRES_DB: reyu
+    ports:
+      - "5432:5432"
+    volumes:
+      - reyu-pg:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: reyu-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+    environment:
+      - VITE_API_BASE=http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: reyu-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - reyu-redis:/data
+    restart: unless-stopped
+
+volumes:
+  reyu-data:
+  reyu-redis:
+  reyu-pg:
