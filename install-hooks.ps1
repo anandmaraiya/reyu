@@ -21,12 +21,17 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Copy-Item "$scriptRoot\context_generator.py" "$scriptsDir\" -Force
 Write-Host "   scripts/context_generator.py installed" -ForegroundColor Green
 
-# 2. Install git hook
+# 2. Install git hook (batch version for Windows)
 $hookDir = "$REPO_ROOT\.git\hooks"
 New-Item -ItemType Directory -Path $hookDir -Force | Out-Null
 
-Copy-Item "$scriptRoot\pre-push.hook" "$hookDir\pre-push" -Force
-Write-Host "   .git/hooks/pre-push installed" -ForegroundColor Green
+$hookSource = "$scriptRoot\pre-push.hook.bat"
+if (Test-Path $hookSource) {
+    Copy-Item $hookSource "$hookDir\pre-push" -Force
+    Write-Host "   .git/hooks/pre-push installed" -ForegroundColor Green
+} else {
+    Write-Host "   Warning: Could not find pre-push.hook.bat" -ForegroundColor Yellow
+}
 
 # 3. Install GitHub Actions workflow
 $ghDir = "$REPO_ROOT\.github"
