@@ -75,6 +75,48 @@ async def delete(name: str):
     return {"ok": True}
 
 
+@router.post("/{name}/kill")
+async def kill_switch(name: str, dry_run: bool = True):
+    """Close every leg by sending opposite-side MARKET orders."""
+    all_p = await store.hgetall_json(PF_KEY)
+    raw = all_p.get(name)
+    if not raw:
+        raise HTTPException(404, "portfolio not found")
+    closes = []
+    for l in raw.get("legs", []):
+        closes.append({
+            "symbol": l["symbol"],
+            "qty": l["qty"],
+            "side": "SELL" if l["action"] == "BUY" else "BUY",
+            "order_type": "MARKET",
+            "product": "INTRADAY",
+            "dry_run": dry_run,
+        })
+    if not dry_run:
+        from app.fyers import client as fy
+        for c in closes:
+            try:
+                await fy.place_order({
+                    "symbol": c["symbol"], "qty": c["qty"],
+                    "type": 2, "side": 1 if c["side"] == "BUY" else -1,
+                    "productType": "INTRADAY", "limitPrice": 0, "stopPrice": 0,
+                    "validity": "DAY", "disclosedQty": 0, "offlineOrder": False,
+                })
+            except Exception as e:
+                c["error"] = str(e)
+    return {"closes": closes, "dry_run": dry_run}
+
+
+@router.get("/{name}/metrics")
+async def metrics(name: str, minutes: int = 1440):
+    from app.analytics.portfolio_metrics import metrics_for_legs
+    all_p = await store.hgetall_json(PF_KEY)
+    raw = all_p.get(name)
+    if not raw:
+        raise HTTPException(404, "portfolio not found")
+    return await metrics_for_legs(raw.get("legs", []), minutes=minutes)
+
+
 @router.get("/{name}/pnl")
 async def live_pnl(name: str):
     all_p = await store.hgetall_json(PF_KEY)

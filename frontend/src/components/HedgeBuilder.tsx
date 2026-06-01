@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api, Chain } from '../api'
+import PayoffChart from './PayoffChart'
 
 const num = (n: any, d = 2) => n == null ? '—' : Number(n).toLocaleString(undefined, { maximumFractionDigits: d })
 
@@ -38,7 +39,7 @@ export default function HedgeBuilder({ underlying, chain }: { underlying: string
         <button className="primary" onClick={build} disabled={loading}>{loading ? '…' : 'Suggest'}</button>
       </div>
       {result?.legs && (
-        <div>
+        <>
           <table>
             <thead><tr><th>Leg</th><th>Action</th><th>Qty</th><th>LTP</th><th>Δ</th><th>Vega</th></tr></thead>
             <tbody>
@@ -59,7 +60,14 @@ export default function HedgeBuilder({ underlying, chain }: { underlying: string
             θ {num(result.portfolio_greeks.theta, 2)} | Vega {num(result.portfolio_greeks.vega, 2)} |
             Debit {num(result.portfolio_greeks.net_debit, 2)}
           </div>
-        </div>
+          {result.margin && (
+            <div style={{ marginTop: 6, fontSize: 12 }}>
+              <strong>Margin required:</strong> ₹ {num(result.margin.total, 0)}
+              <span style={{ color: 'var(--muted)', marginLeft: 6 }}>({result.margin.source})</span>
+            </div>
+          )}
+          {result.payoff && <div style={{ marginTop: 8 }}><PayoffChart payoff={result.payoff} height={200} /></div>}
+        </>
       )}
     </div>
   )

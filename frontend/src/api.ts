@@ -22,6 +22,7 @@ export type ChainSummary = {
 }
 export type Chain = {
   underlying: string; ltp: number; expiry: any
+  expiries?: { date: string; expiry: number }[]
   strikes: Strike[]; summary: ChainSummary
   bias: { bias: string; score: number; signals: string[] }
 }

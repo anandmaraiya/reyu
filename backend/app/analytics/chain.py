@@ -89,10 +89,16 @@ def normalize_chain(payload: dict[str, Any]) -> dict[str, Any]:
         ivs = [v for v in (atm.get("ce", {}).get("iv"), atm.get("pe", {}).get("iv")) if v]
         atm_iv = sum(ivs) / len(ivs) if ivs else None
 
+    expiries = []
+    for e in (data.get("expiryData") or []):
+        if isinstance(e, dict):
+            expiries.append({"date": e.get("date"), "expiry": e.get("expiry")})
+
     return {
         "underlying": data.get("symbol"),
         "ltp": spot,
         "expiry": expiry_ts,
+        "expiries": expiries,
         "strikes": rows,
         "summary": {
             "pcr_oi": (total_pe_oi / total_ce_oi) if total_ce_oi else None,

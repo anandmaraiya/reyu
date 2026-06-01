@@ -5,11 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import (
     auth, options, analytics, watchlist, portfolio, scalping,
-    timeseries, stream, orders,
+    timeseries, stream, orders, strategy, system, journal, notify,
 )
 from app.store import store
 from app.db import init_db
 from app import scheduler
+from app.seeds import seed_default_watchlists
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -19,6 +20,7 @@ async def lifespan(app: FastAPI):
     await store.connect()
     await init_db()
     await scheduler.seed_tracked()
+    await seed_default_watchlists()
     scheduler.start()
     yield
     scheduler.stop()
@@ -43,6 +45,10 @@ app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"]
 app.include_router(scalping.router, prefix="/api/scalping", tags=["scalping"])
 app.include_router(timeseries.router, prefix="/api/ts", tags=["timeseries"])
 app.include_router(orders.router, prefix="/api/orders", tags=["orders"])
+app.include_router(strategy.router, prefix="/api/strategy", tags=["strategy"])
+app.include_router(system.router, prefix="/api/system", tags=["system"])
+app.include_router(journal.router, prefix="/api/journal", tags=["journal"])
+app.include_router(notify.router, prefix="/api/notify", tags=["notify"])
 app.include_router(stream.router, tags=["stream"])
 
 

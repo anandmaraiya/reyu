@@ -67,10 +67,21 @@ function PortfolioCard({ name, p, onDelete }: { name: string; p: any; onDelete: 
     queryFn: async () => (await api.get(`/api/portfolio/${encodeURIComponent(name)}/pnl`)).data,
     refetchInterval: 8000,
   })
+  const { data: metrics } = useQuery({
+    queryKey: ['metrics', name],
+    queryFn: async () => (await api.get(`/api/portfolio/${encodeURIComponent(name)}/metrics`)).data,
+    refetchInterval: 60000,
+  })
   const r = p.risk || {}
+  const killAll = async () => {
+    if (!confirm(`Close ALL legs of "${name}"? This sends opposite-side MARKET orders.`)) return
+    await api.post(`/api/portfolio/${encodeURIComponent(name)}/kill`, null, { params: { dry_run: false } })
+    alert(`Kill switch fired for ${name}`)
+  }
   return (
     <div className="card col" style={{ minWidth: 320 }}>
       <h3>{name} <span className="tag neutral" style={{ marginLeft: 6 }}>{p.style}</span>
+        <button onClick={killAll} style={{ float: 'right', marginLeft: 4, background: 'var(--red)', color: '#fff', borderColor: 'transparent' }} title="Close all legs">⏻</button>
         <button onClick={onDelete} style={{ float: 'right' }}>×</button>
       </h3>
       <div className="kpi" style={{ color: (pnl?.pnl ?? 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>
@@ -79,6 +90,11 @@ function PortfolioCard({ name, p, onDelete }: { name: string; p: any; onDelete: 
       <div style={{ fontSize: 11, color: 'var(--muted)', margin: '6px 0' }}>
         Δ {num(r.greeks?.delta, 2)} | Vega {num(r.greeks?.vega, 2)} | Exp ₹{num(r.greeks?.exposure, 0)}
       </div>
+      {metrics && (
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>
+          Sharpe {metrics.sharpe ?? '—'} · MaxDD ₹{num(metrics.max_drawdown, 0)} · Win {metrics.win_rate != null ? (metrics.win_rate * 100).toFixed(0) + '%' : '—'}
+        </div>
+      )}
       {r.violations?.length > 0 && (
         <div className="tag bear" style={{ marginBottom: 6 }}>⚠ {r.violations.join('; ')}</div>
       )}

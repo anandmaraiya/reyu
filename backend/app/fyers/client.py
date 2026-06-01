@@ -13,9 +13,14 @@ from fyers_apiv3.FyersWebsocket import data_ws
 
 from app.config import settings
 from app.store import store
+from app.fyers import mock
 
 
 TOKEN_KEY = "fyers:access_token"
+
+
+async def is_demo() -> bool:
+    return not bool(await store.r.get(TOKEN_KEY))
 
 
 async def get_access_token() -> str | None:
@@ -27,10 +32,11 @@ async def set_access_token(token: str) -> None:
     await store.r.set(TOKEN_KEY, token, ex=23 * 3600)
 
 
-async def _model() -> fyersModel.FyersModel:
+async def _model() -> fyersModel.FyersModel | None:
+    """Returns a Fyers client, or None to signal demo mode."""
     token = await get_access_token()
     if not token:
-        raise RuntimeError("Fyers not authenticated. Run /api/auth/login first.")
+        return None
     return fyersModel.FyersModel(
         client_id=settings.fyers_app_id,
         token=token,
@@ -41,12 +47,15 @@ async def _model() -> fyersModel.FyersModel:
 
 async def quotes(symbols: list[str]) -> dict[str, Any]:
     m = await _model()
+    if m is None:
+        return mock.mock_quotes(symbols)
     return await run_in_threadpool(m.quotes, data={"symbols": ",".join(symbols)})
 
 
 async def option_chain(symbol: str, strikecount: int = 25, timestamp: str = "") -> dict[str, Any]:
-    """`symbol` e.g. 'NSE:NIFTY50-INDEX' or 'NSE:RELIANCE-EQ'."""
     m = await _model()
+    if m is None:
+        return mock.mock_option_chain(symbol, strikecount)
     return await run_in_threadpool(
         m.optionchain,
         data={"symbol": symbol, "strikecount": strikecount, "timestamp": timestamp},
@@ -55,21 +64,21 @@ async def option_chain(symbol: str, strikecount: int = 25, timestamp: str = "") 
 
 async def history(symbol: str, resolution: str, range_from: str, range_to: str) -> dict[str, Any]:
     m = await _model()
+    if m is None:
+        return mock.mock_history(symbol, resolution, range_from, range_to)
     return await run_in_threadpool(
         m.history,
         data={
-            "symbol": symbol,
-            "resolution": resolution,
-            "date_format": "1",
-            "range_from": range_from,
-            "range_to": range_to,
-            "cont_flag": "1",
+            "symbol": symbol, "resolution": resolution, "date_format": "1",
+            "range_from": range_from, "range_to": range_to, "cont_flag": "1",
         },
     )
 
 
 async def positions() -> dict[str, Any]:
     m = await _model()
+    if m is None:
+        return mock.mock_positions()
     return await run_in_threadpool(m.positions)
 
 
