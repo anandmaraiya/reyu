@@ -13,6 +13,7 @@ type OptionChainTableProps = {
   initialSelected?: number[]
   onSelectionChange?: (selected: number[]) => void
   onStrategyBuild?: (selected: number[]) => void
+  onHoverStrike?: (strike: number | null) => void
 }
 
 function heat(oi: number, max: number, side: 'ce' | 'pe') {
@@ -41,6 +42,7 @@ export default function OptionChainTable({
   initialSelected = [],
   onSelectionChange,
   onStrategyBuild,
+  onHoverStrike,
 }: OptionChainTableProps) {
   const atm = chain.summary.atm_strike
   const [filter, setFilter] = useState<Moneyness>('ALL')
@@ -137,7 +139,10 @@ export default function OptionChainTable({
               const pe = r.pe || {} as any
               const selectedRow = selected.includes(r.strike)
               return (
-                <tr key={r.strike} className={`${r.strike === atm ? 'atm' : ''} ${selectedRow ? 'selected-row' : ''}`}>
+                <tr key={r.strike}
+                    className={`${r.strike === atm ? 'atm' : ''} ${selectedRow ? 'selected-row' : ''}`}
+                    onMouseEnter={() => onHoverStrike?.(r.strike)}
+                    onMouseLeave={() => onHoverStrike?.(null)}>
                   <td className="check-column"><input type="checkbox" checked={selectedRow} onChange={() => toggleSelect(r.strike)} aria-label={`Select strike ${r.strike}`} /></td>
                   <td style={{ background: heat(ce.oi, maxOI, 'ce') }}>{num(ce.oi, 0)}</td>
                   <td className={ce.oi_change > 0 ? 'bull' : ce.oi_change < 0 ? 'bear' : ''}>{num(ce.oi_change, 0)}</td>

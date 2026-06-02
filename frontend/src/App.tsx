@@ -13,7 +13,10 @@ import Saved from './pages/Saved'
 import Audit from './pages/Audit'
 import Compare from './pages/Compare'
 import Settings from './pages/Settings'
+import Subscription from './pages/Subscription'
 import CommandPalette from './CommandPalette'
+import ErrorBoundary from './ErrorBoundary'
+import MarketTicker from './components/MarketTicker'
 
 type Status = { fyers: boolean; demo_mode: boolean; redis: boolean; postgres: boolean; last_snapshot_at: string | null; tracked_symbols: number }
 
@@ -38,13 +41,8 @@ const NAV: NavGroup[] = [
   { group: 'Account', items: [
     { to: '/login', label: 'Fyers Auth', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5a3 3 0 0 1 3 3v4a3 3 0 1 1-6 0V8a3 3 0 0 1 3-3z"/><path d="M5 21h14"/></svg> },
     { to: '/settings', label: 'Settings', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.7l.1.1a2 2 0 0 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.7-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 0 1-4 0v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.7.3l-.1.1a2 2 0 0 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.7 1.7 1.7 0 0 0-1.6-1H3a2 2 0 0 1 0-4h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.7l-.1-.1a2 2 0 0 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.7.3h.2A1.7 1.7 0 0 0 10 3.6V3a2 2 0 0 1 4 0v.2a1.7 1.7 0 0 0 1 1.6h.2a1.7 1.7 0 0 0 1.7-.3l.1-.1a2 2 0 0 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.7v.2a1.7 1.7 0 0 0 1.6 1H21a2 2 0 0 1 0 4h-.2a1.7 1.7 0 0 0-1.6 1z"/></svg> },
+    { to: '/subscription', label: 'Subscription', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l3 6 6 1-4.5 4.5L18 20l-6-3-6 3 1.5-6.5L3 9l6-1z"/></svg> },
   ]},
-]
-
-const TICKERS = [
-  { symbol: 'NIFTY', value: '23,780', change: '+0.4%' },
-  { symbol: 'BANKNIFTY', value: '55,240', change: '+0.9%' },
-  { symbol: 'FINNIFTY', value: '24,120', change: '+0.2%' },
 ]
 
 function StatusDot({ ok, label }: { ok: boolean; label: string }) {
@@ -141,15 +139,7 @@ export default function App() {
       </aside>
 
       <div className="main-wrapper">
-        <section className="ticker-strip">
-          {TICKERS.map(item => (
-            <div key={item.symbol} className="ticker-item">
-              <span className="ticker-label">{item.symbol}</span>
-              <span className="ticker-value">{item.value}</span>
-              <span className={`ticker-change ${item.change.startsWith('+') ? 'positive' : 'negative'}`}>{item.change}</span>
-            </div>
-          ))}
-        </section>
+        <MarketTicker />
 
         <div className="page-header">
           <div>
@@ -185,20 +175,25 @@ export default function App() {
               <strong>DEMO MODE</strong> — showing synthetic data. <a href="/login">Connect Fyers</a> to switch to live quotes, orders, and positions.
             </div>
           )}
-          <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/strategy" element={<Strategy />} />
-            <Route path="/compare" element={<Compare />} />
-            <Route path="/positions" element={<Positions />} />
-            <Route path="/watchlists" element={<Watchlists />} />
-            <Route path="/portfolios" element={<Portfolios />} />
-            <Route path="/scalping" element={<Scalping />} />
-            <Route path="/saved" element={<Saved />} />
-            <Route path="/audit" element={<Audit />} />
-            <Route path="/settings" element={<Settings theme={theme} setTheme={setTheme} />} />
-            <Route path="/login" element={<Login />} />
-          </Routes>
+          <ErrorBoundary>
+            <div className="route-fade" key={location.pathname}>
+              <Routes location={location}>
+                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/strategy" element={<Strategy />} />
+                <Route path="/compare" element={<Compare />} />
+                <Route path="/positions" element={<Positions />} />
+                <Route path="/watchlists" element={<Watchlists />} />
+                <Route path="/portfolios" element={<Portfolios />} />
+                <Route path="/scalping" element={<Scalping />} />
+                <Route path="/saved" element={<Saved />} />
+                <Route path="/audit" element={<Audit />} />
+                <Route path="/settings" element={<Settings theme={theme} setTheme={setTheme} />} />
+                <Route path="/subscription" element={<Subscription />} />
+                <Route path="/login" element={<Login />} />
+              </Routes>
+            </div>
+          </ErrorBoundary>
         </main>
       </div>
 

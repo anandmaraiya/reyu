@@ -14,6 +14,8 @@ import KeyLevelsStrip from '../components/KeyLevelsStrip'
 import RecommendationPanel from '../components/RecommendationPanel'
 import FilterBar from '../components/FilterBar'
 import OITimeSeries from '../components/OITimeSeries'
+import OIBuildup from '../components/OIBuildup'
+import StrikeDetailPanel from '../components/StrikeDetailPanel'
 import { LoadingSkeleton } from '../components/LoadingStates'
 import { useToast } from '../toast'
 import { downloadCSV } from '../utils/csv'
@@ -37,12 +39,13 @@ type OptionChainTableTradableProps = {
   onTrade: (s: string, side: 'BUY' | 'SELL', p?: number) => void
   onSelectionChange: (selected: number[]) => void
   onStrategyBuild: (selected: number[]) => void
+  onHoverStrike?: (strike: number | null) => void
 }
 
-function OptionChainTableTradable({ chain, onTrade, onSelectionChange, onStrategyBuild }: OptionChainTableTradableProps) {
+function OptionChainTableTradable({ chain, onTrade, onSelectionChange, onStrategyBuild, onHoverStrike }: OptionChainTableTradableProps) {
   return (
     <div>
-      <OptionChainTable chain={chain} onSelectionChange={onSelectionChange} onStrategyBuild={onStrategyBuild} />
+      <OptionChainTable chain={chain} onSelectionChange={onSelectionChange} onStrategyBuild={onStrategyBuild} onHoverStrike={onHoverStrike} />
       <div style={{ marginTop: 8, fontSize: 11, color: 'var(--muted)' }}>
         Quick trade ATM:
         {(() => {
@@ -75,6 +78,7 @@ export default function Dashboard() {
   const [order, setOrder] = useState<{ symbol: string; side: 'BUY' | 'SELL'; price?: number } | null>(null)
   const [searchHistory, setSearchHistory] = useState<string[]>([])
   const [selectedStrikes, setSelectedStrikes] = useState<number[]>([])
+  const [hoverStrike, setHoverStrike] = useState<number | null>(null)
 
   const { data, isFetching, error, refetch } = useQuery<Chain>({
     queryKey: ['chain', symbol, strikes, expiry],
@@ -162,8 +166,8 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="row" style={{ gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
-        <div className="col" style={{ minWidth: 240, maxWidth: 360 }}>
+      <div className="grid-3">
+        <div className="col">
           <div className="card-glass">
             <div className="card-header"><h3>Market</h3></div>
             <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
@@ -203,38 +207,54 @@ export default function Dashboard() {
         </div>
         {data ? (
           <>
-            <div className="col" style={{ flex: 1, minWidth: 320 }}>
+            <div className="col">
               <RecommendationPanel chain={data} onApply={() => navigate(`/strategy?underlying=${encodeURIComponent(symbol)}`)} />
             </div>
-            <div className="col" style={{ flex: 1, minWidth: 320 }}>
+            <div className="col">
               <KeyLevelsStrip chain={data} />
             </div>
           </>
         ) : (
-          <div className="col" style={{ flex: 1, minWidth: 320 }}>
-            <LoadingSkeleton />
-          </div>
+          <div className="col"><LoadingSkeleton /></div>
         )}
       </div>
 
+      {/* KPI strip — full width, prominent */}
       {data && <SummaryStrip chain={data} />}
 
+      {/* Analytical charts — three equal-weight cards */}
       {data && (
-        <div className="row" style={{ gap: 12, marginTop: 12 }}>
-          <div className="col" style={{ flex: 1, minWidth: 320 }}><IVSmile chain={data} /></div>
-          <div className="col" style={{ flex: 1, minWidth: 320 }}><GreeksHeatmap chain={data} /></div>
+        <div className="grid-3">
+          <div className="col"><IVSmile chain={data} /></div>
+          <div className="col"><GreeksHeatmap chain={data} /></div>
+          <div className="col">
+            <div className="card">
+              <div className="card-header"><h3>OI Distribution</h3></div>
+              <OIChart chain={data} windowSize={oiWindow} />
+            </div>
+          </div>
         </div>
       )}
 
-      <div className="row" style={{ marginTop: 12, gap: 12 }}>
-        <div className="col" style={{ flex: 2, minWidth: 500 }}>
+      {/* OI Build-up — full-width when the Hedge Builder lives at the bottom */}
+      {data && (
+        <div className="card">
+          <div className="card-header"><h3>OI Build-up (ATM ± 4)</h3></div>
+          <OIBuildup chain={data} window={4} />
+        </div>
+      )}
+
+      {/* Option chain (scrolling) + sticky Strike Detail rail */}
+      <div className="grid-main">
+        <div className="col">
           <div className="card">
-            <div className="card-header"><h3>Option Chain — click ATM CE/PE to trade</h3></div>
+            <div className="card-header"><h3>Option Chain — hover any row for live context · click ATM CE/PE to trade</h3></div>
             {data ? (
               <OptionChainTableTradable
                 chain={data}
                 onTrade={(sym, side, price) => setOrder({ symbol: sym, side, price })}
                 onSelectionChange={setSelectedStrikes}
+                onHoverStrike={setHoverStrike}
                 onStrategyBuild={(selected) => {
                   setSelectedStrikes(selected)
                   if (selected.length > 0) {
@@ -248,29 +268,26 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="col" style={{ flex: 1, minWidth: 320 }}>
-          <div className="card"><div className="card-header"><h3>OI Distribution</h3></div><OIChart chain={data} windowSize={oiWindow} /></div>
-          <div style={{ height: 12 }} />
-          <div className="card" style={{ marginBottom: 12 }}>
-            <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-              <h3 style={{ margin: 0 }}>OI Build-up</h3>
-              <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <select value={oiSeriesInterval} onChange={e => setOiSeriesInterval(e.target.value as '5m' | '15m')}>
-                  <option value="5m">5m</option>
-                  <option value="15m">15m</option>
-                </select>
-                <select value={oiSeriesMinutes} onChange={e => setOiSeriesMinutes(+e.target.value)}>
-                  <option value={120}>2h</option>
-                  <option value={240}>4h</option>
-                  <option value={480}>8h</option>
-                </select>
-              </div>
-            </div>
-            <OITimeSeries symbol={symbol} interval={oiSeriesInterval} minutes={oiSeriesMinutes} />
-          </div>
-          <HedgeBuilder underlying={symbol} chain={data} />
-        </div>
+        <aside className="col sticky-rail">
+          {data ? <StrikeDetailPanel chain={data} strike={hoverStrike} /> : <LoadingSkeleton />}
+        </aside>
       </div>
+
+      {/* Intraday time-series — today's session, switchable to a specific option leg */}
+      <div className="card">
+        <div className="card-header">
+          <h3>Intraday Time-Series — today's session (09:15 IST → now)</h3>
+          <div className="row" style={{ gap: 6 }}>
+            <select value={oiSeriesInterval} onChange={e => setOiSeriesInterval(e.target.value as '5m' | '15m')}>
+              <option value="5m">5m</option><option value="15m">15m</option>
+            </select>
+          </div>
+        </div>
+        <OITimeSeries symbol={symbol} chain={data} interval={oiSeriesInterval} />
+      </div>
+
+      {/* Hedge Builder — anchored at bottom */}
+      {data && <HedgeBuilder underlying={symbol} chain={data} />}
 
       {!data && isFetching && <LoadingSkeleton />}
 

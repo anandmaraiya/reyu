@@ -5,6 +5,7 @@ import { api, Chain } from '../api'
 import PayoffChart from '../components/PayoffChart'
 import { useToast } from '../toast'
 import { downloadCSV } from '../utils/csv'
+import { detectStrategyName, RiskMeter, PopGauge } from '../components/StrategyVisuals'
 
 type Leg = { symbol: string; action: 'BUY' | 'SELL'; qty: number; price: number; strike?: number; option_type?: 'CE' | 'PE'; lot_size: number }
 type Template = { key: string; view: string; label: string; desc: string }
@@ -146,10 +147,17 @@ export default function Strategy() {
 
   const netDebit = useMemo(() => legs.reduce((s, l) => s + (l.action === 'BUY' ? 1 : -1) * l.price * l.qty, 0), [legs])
 
+  const strategyName = useMemo(() => detectStrategyName(legs), [legs])
+
   return (
     <div>
       <div className="card" style={{ marginBottom: 12 }}>
-        <h3>Strategy Builder</h3>
+        <div className="row" style={{ alignItems: 'baseline', gap: 10 }}>
+          <h3 style={{ margin: 0 }}>Strategy Builder</h3>
+          {legs.length > 0 && (
+            <span className="tag" style={{ background: 'rgba(96,165,250,.15)', color: 'var(--accent)' }}>{strategyName}</span>
+          )}
+        </div>
         <div className="row" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
           <label style={{ fontSize: 12, color: 'var(--muted)' }}>Underlying</label>
           <select value={underlying} onChange={e => { setUnderlying(e.target.value); setLegs([]); setAnalysis(null) }}>
@@ -270,10 +278,14 @@ export default function Strategy() {
                     {analysis.margin?.source === 'fyers' ? 'Fyers SPAN + Exposure' : `${analysis.margin?.category} (est)`}
                   </div>
                 </div>
-                <div className="card col"><h3>POP</h3>
-                  <div className={`kpi ${(analysis.pop?.pop ?? 0) > 0.6 ? 'bull' : (analysis.pop?.pop ?? 0) < 0.4 ? 'bear' : 'neutral'}`}>{pct(analysis.pop?.pop)}</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                    1σ band: {analysis.pop?.expected_1sd_range?.map((v: number) => num(v, 0)).join(' – ') || '—'}
+                <div className="card col" style={{ alignItems: 'center', display: 'flex', flexDirection: 'column' }}>
+                  <h3 style={{ alignSelf: 'flex-start' }}>POP & Risk</h3>
+                  <PopGauge pop={analysis.pop?.pop} />
+                  <div style={{ fontSize: 10, color: 'var(--muted)', textAlign: 'center', marginTop: 2 }}>
+                    1σ {analysis.pop?.expected_1sd_range?.map((v: number) => num(v, 0)).join(' – ') || '—'}
+                  </div>
+                  <div style={{ width: '100%', marginTop: 8 }}>
+                    <RiskMeter maxLoss={analysis.payoff.max_loss} margin={analysis.margin?.total || 0} />
                   </div>
                 </div>
                 <div className="card col"><h3>Net Greeks</h3>

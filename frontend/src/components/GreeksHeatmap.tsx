@@ -24,35 +24,44 @@ export default function GreeksHeatmap({ chain }: { chain: Chain }) {
   return (
     <div className="card">
       <h3>Greeks Heatmap (±5 strikes from ATM)</h3>
-      <table>
-        <thead>
-          <tr>
-            <th colSpan={4} style={{ textAlign: 'center' }}>CALL</th>
-            <th>Strike</th>
-            <th colSpan={4} style={{ textAlign: 'center' }}>PUT</th>
-          </tr>
-          <tr>
-            <th>Δ</th><th>Γ</th><th>θ</th><th>Vega</th>
-            <th></th>
-            <th>Δ</th><th>Γ</th><th>θ</th><th>Vega</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(s => (
-            <tr key={s.strike} className={s.strike === atm ? 'atm' : ''}>
-              <td style={{ background: colour(s.ce?.delta || 0, maxD, 'pos') }}>{num(s.ce?.delta, 3)}</td>
-              <td style={{ background: colour(s.ce?.gamma || 0, maxG, 'abs') }}>{num(s.ce?.gamma, 4)}</td>
-              <td style={{ background: colour(s.ce?.theta || 0, maxT, 'pos') }}>{num(s.ce?.theta, 2)}</td>
-              <td style={{ background: colour(s.ce?.vega || 0, maxV, 'abs') }}>{num(s.ce?.vega, 2)}</td>
-              <td style={{ textAlign: 'center', fontWeight: 600 }}>{s.strike}</td>
-              <td style={{ background: colour(s.pe?.delta || 0, maxD, 'pos') }}>{num(s.pe?.delta, 3)}</td>
-              <td style={{ background: colour(s.pe?.gamma || 0, maxG, 'abs') }}>{num(s.pe?.gamma, 4)}</td>
-              <td style={{ background: colour(s.pe?.theta || 0, maxT, 'pos') }}>{num(s.pe?.theta, 2)}</td>
-              <td style={{ background: colour(s.pe?.vega || 0, maxV, 'abs') }}>{num(s.pe?.vega, 2)}</td>
+      <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
+        <table className="greeks-heatmap" style={{ tableLayout: 'fixed', width: '100%', minWidth: 460, fontSize: 11 }}>
+          <colgroup>
+            <col style={{ width: '11%' }} /><col style={{ width: '11%' }} />
+            <col style={{ width: '11%' }} /><col style={{ width: '11%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '11%' }} /><col style={{ width: '11%' }} />
+            <col style={{ width: '11%' }} /><col style={{ width: '11%' }} />
+          </colgroup>
+          <thead>
+            <tr>
+              <th colSpan={4} style={{ textAlign: 'center' }}>CALL</th>
+              <th>Strike</th>
+              <th colSpan={4} style={{ textAlign: 'center' }}>PUT</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+            <tr>
+              <th>Δ</th><th>Γ</th><th>θ</th><th>V</th>
+              <th></th>
+              <th>Δ</th><th>Γ</th><th>θ</th><th>V</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(s => (
+              <tr key={s.strike} className={s.strike === atm ? 'atm' : ''}>
+                <td style={{ background: colour(s.ce?.delta || 0, maxD, 'pos') }}>{num(s.ce?.delta, 2)}</td>
+                <td style={{ background: colour(s.ce?.gamma || 0, maxG, 'abs') }}>{num(s.ce?.gamma, 3)}</td>
+                <td style={{ background: colour(s.ce?.theta || 0, maxT, 'pos') }}>{num(s.ce?.theta, 1)}</td>
+                <td style={{ background: colour(s.ce?.vega || 0, maxV, 'abs') }}>{num(s.ce?.vega, 1)}</td>
+                <td style={{ textAlign: 'center', fontWeight: 600 }}>{s.strike}</td>
+                <td style={{ background: colour(s.pe?.delta || 0, maxD, 'pos') }}>{num(s.pe?.delta, 2)}</td>
+                <td style={{ background: colour(s.pe?.gamma || 0, maxG, 'abs') }}>{num(s.pe?.gamma, 3)}</td>
+                <td style={{ background: colour(s.pe?.theta || 0, maxT, 'pos') }}>{num(s.pe?.theta, 1)}</td>
+                <td style={{ background: colour(s.pe?.vega || 0, maxV, 'abs') }}>{num(s.pe?.vega, 1)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

@@ -235,3 +235,74 @@ async def audit_log(limit: int = 50):
     import json as _json
     raw = await store.r.lrange(AUDIT_KEY, 0, limit - 1)
     return [_json.loads(x) for x in raw]
+
+
+# -------- Exit positions --------
+class ExitRequest(BaseModel):
+    symbols: list[str] | None = None   # None + all=True closes everything
+    underlyings: list[str] | None = None  # close everything grouped under these
+    all: bool = False
+    product: str = "INTRADAY"
+    dry_run: bool = True
+
+
+def _reverse_action(net_qty: int) -> tuple[str, int]:
+    return ("SELL", net_qty) if net_qty > 0 else ("BUY", -net_qty)
+
+
+@router.post("/exit")
+async def exit_positions(req: ExitRequest):
+    """Builds market orders to flatten matching open positions.
+
+    Filter precedence:
+      all=True              → every netQty != 0
+      symbols=[...]         → only those exact symbols
+      underlyings=[...]     → all positions whose underlying scrip matches
+    """
+    raw = await fy.positions()
+    nets = raw.get("netPositions", []) if isinstance(raw, dict) else []
+
+    from app.fyers.symbols import parse as parse_sym
+
+    candidates = []
+    for p in nets:
+        sym = p.get("symbol")
+        net_qty = int(p.get("netQty") or 0)
+        if not sym or net_qty == 0:
+            continue
+        under = parse_sym(sym).underlying or sym
+        if req.all:
+            keep = True
+        elif req.symbols:
+            keep = sym in req.symbols
+        elif req.underlyings:
+            keep = under in req.underlyings
+        else:
+            keep = False
+        if keep:
+            candidates.append((sym, net_qty, float(p.get("ltp") or 0)))
+
+    if not candidates:
+        return {"ok": True, "matched": 0, "results": [], "note": "no matching open positions"}
+
+    placed = []
+    for sym, net_qty, ltp in candidates:
+        action, qty = _reverse_action(net_qty)
+        leg = OrderRequest(symbol=sym, qty=qty, side=action,  # type: ignore
+                           order_type="MARKET", product=req.product, dry_run=req.dry_run)
+        try:
+            r = await place(leg)
+            placed.append({"symbol": sym, "qty": qty, "side": action, "ltp": ltp, "response": r})
+        except HTTPException as e:
+            placed.append({"symbol": sym, "error": e.detail})
+
+    audit = {"ts": datetime.utcnow().isoformat(), "label": "EXIT",
+             "dry_run": req.dry_run, "legs": [], "results": placed}
+    await store.r.lpush(AUDIT_KEY, __import__("json").dumps(audit, default=str))
+    await store.r.ltrim(AUDIT_KEY, 0, 499)
+
+    from app import notify as _n
+    ok = all("error" not in p for p in placed)
+    await _n.emit("EXIT_POSITIONS",
+                  f"{len(candidates)} legs · {'DRY' if req.dry_run else 'LIVE'} · {'OK' if ok else 'PARTIAL'}")
+    return {"ok": ok, "matched": len(candidates), "results": placed}

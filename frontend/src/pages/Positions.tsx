@@ -1,45 +1,109 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import PayoffChart from '../components/PayoffChart'
+import ConfirmDialog from '../components/ConfirmDialog'
 import { downloadCSV } from '../utils/csv'
+import { useToast } from '../toast'
 
 const num = (n: any, d = 2) => n == null ? '—' : Number(n).toLocaleString(undefined, { maximumFractionDigits: d })
 
+type ExitTarget =
+  | { kind: 'all' }
+  | { kind: 'group'; underlying: string }
+  | { kind: 'leg'; symbol: string }
+
 export default function Positions() {
+  const t = useToast()
+  const qc = useQueryClient()
+  const [exitTarget, setExitTarget] = useState<ExitTarget | null>(null)
+  const [exitDry, setExitDry] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+
   const { data, isFetching, refetch, error } = useQuery({
     queryKey: ['pos-by-ticker'],
     queryFn: async () => (await api.get('/api/strategy/positions-by-ticker')).data,
     refetchInterval: 15000,
   })
 
+  const groups: any[] = data?.groups ?? []
+  const totalPL = groups.reduce((s, g) => s + (g.net_pl || 0), 0)
+  const totalMargin = groups.reduce((s, g) => s + (g.margin?.total || 0), 0)
+  const totalLegs = groups.reduce((s, g) => s + g.legs.length, 0)
+
+  const confirmText = (() => {
+    if (!exitTarget) return ''
+    if (exitTarget.kind === 'all') return `flatten all ${totalLegs} open legs across ${groups.length} ticker(s)`
+    if (exitTarget.kind === 'group') return `close every leg in ${exitTarget.underlying}`
+    return `close ${exitTarget.symbol}`
+  })()
+
+  const submitExit = async () => {
+    if (!exitTarget) return
+    setSubmitting(true)
+    try {
+      const body: any = { dry_run: exitDry }
+      if (exitTarget.kind === 'all') body.all = true
+      if (exitTarget.kind === 'group') body.underlyings = [exitTarget.underlying]
+      if (exitTarget.kind === 'leg') body.symbols = [exitTarget.symbol]
+      const r = await api.post('/api/orders/exit', body)
+      t.push(r.data.ok ? 'success' : 'error',
+             `Exit ${exitDry ? '(dry)' : '(live)'} — ${r.data.matched} legs, ${r.data.ok ? 'ok' : 'partial'}`)
+      qc.invalidateQueries({ queryKey: ['pos-by-ticker'] })
+    } catch (e: any) {
+      t.push('error', e.response?.data?.detail || e.message)
+    } finally {
+      setSubmitting(false)
+      setExitTarget(null)
+    }
+  }
+
   return (
-    <div>
-      <div className="row" style={{ alignItems: 'center', marginBottom: 12 }}>
+    <div className="page-shell">
+      <div className="row" style={{ alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
         <h3 style={{ margin: 0 }}>Active Positions by Ticker</h3>
-        <button onClick={() => refetch()} style={{ marginLeft: 'auto' }}>{isFetching ? '…' : 'Refresh'}</button>
+        <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+          {totalLegs} legs · {groups.length} tickers · Net P&amp;L
+          <strong className={totalPL >= 0 ? 'bull' : 'bear'} style={{ marginLeft: 4 }}>₹{num(totalPL, 0)}</strong>
+          · Margin ₹{num(totalMargin, 0)}
+        </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+          <button onClick={() => refetch()}>{isFetching ? '…' : 'Refresh'}</button>
+          <button
+            onClick={() => setExitTarget({ kind: 'all' })}
+            disabled={totalLegs === 0}
+            style={{ background: 'var(--red)', color: '#fff', borderColor: 'transparent' }}
+          >Exit All</button>
+        </div>
       </div>
 
       {error && <div className="card bear">{(error as any).message}</div>}
       {data?.error && <div className="card bear">{data.error}</div>}
-      {data?.groups?.length === 0 && (
+      {groups.length === 0 && (
         <div className="card" style={{ color: 'var(--muted)' }}>
           No open positions in your Fyers account.
         </div>
       )}
 
-      {data?.groups?.map((g: any) => (
+      {groups.map((g: any) => (
         <div key={g.underlying} className="card" style={{ marginBottom: 12 }}>
-          <div className="row" style={{ alignItems: 'baseline' }}>
+          <div className="row" style={{ alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
             <h3 style={{ margin: 0 }}>{g.underlying}</h3>
             <span style={{ color: 'var(--muted)', fontSize: 12 }}>Spot {num(g.spot, 2)}</span>
-            <span style={{ marginLeft: 'auto', fontSize: 14 }}>
+            <span style={{ fontSize: 14 }}>
               Net P&amp;L:
               <strong className={g.net_pl >= 0 ? 'bull' : 'bear'} style={{ marginLeft: 6 }}>
                 ₹{num(g.net_pl, 0)}
               </strong>
             </span>
             <span style={{ fontSize: 12 }}>Margin ₹{num(g.margin?.total, 0)}</span>
-            <button onClick={() => downloadCSV(`${g.underlying}-positions.csv`, g.legs)}>CSV</button>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              <button onClick={() => downloadCSV(`${g.underlying}-positions.csv`, g.legs)}>CSV</button>
+              <button
+                onClick={() => setExitTarget({ kind: 'group', underlying: g.underlying })}
+                style={{ background: 'var(--red)', color: '#fff', borderColor: 'transparent' }}
+              >Close {g.underlying}</button>
+            </div>
           </div>
 
           {g.suggestions?.length > 0 && (
@@ -52,30 +116,75 @@ export default function Positions() {
             </div>
           )}
 
-          <div className="row" style={{ marginTop: 8 }}>
-            <div className="col" style={{ flex: 1 }}>
-              <table>
-                <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg</th><th>LTP</th><th>P&amp;L</th></tr></thead>
-                <tbody>
-                  {g.legs.map((l: any) => (
-                    <tr key={l.symbol}>
-                      <td style={{ fontSize: 11 }}>{l.symbol}</td>
-                      <td className={l.action === 'BUY' ? 'bull' : 'bear'}>{l.action}</td>
-                      <td>{l.qty}</td>
-                      <td>{num(l.price)}</td>
-                      <td>{num(l.ltp)}</td>
-                      <td className={l.pl >= 0 ? 'bull' : 'bear'}>{num(l.pl, 0)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="grid-2" style={{ marginTop: 8 }}>
+            <div className="col">
+              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div className="card-header" style={{ padding: '10px 14px 6px' }}>
+                  <h3>Legs ({g.legs.length})</h3>
+                </div>
+                <div style={{ maxHeight: 320, overflow: 'auto' }}>
+                  <table>
+                    <thead style={{ position: 'sticky', top: 0, background: 'var(--panel)', zIndex: 1 }}>
+                      <tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg</th><th>LTP</th><th>P&amp;L</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {g.legs.map((l: any) => (
+                        <tr key={l.symbol}>
+                          <td style={{ fontSize: 11 }}>{l.symbol}</td>
+                          <td className={l.action === 'BUY' ? 'bull' : 'bear'}>{l.action}</td>
+                          <td>{l.qty}</td>
+                          <td>{num(l.price)}</td>
+                          <td>{num(l.ltp)}</td>
+                          <td className={l.pl >= 0 ? 'bull' : 'bear'}>{num(l.pl, 0)}</td>
+                          <td>
+                            <button
+                              onClick={() => setExitTarget({ kind: 'leg', symbol: l.symbol })}
+                              title="Close this leg"
+                              style={{ padding: '2px 6px', background: 'var(--red)', color: '#fff', borderColor: 'transparent', fontSize: 11 }}
+                            >Exit</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
-            <div className="col" style={{ flex: 2 }}>
-              {g.payoff && <PayoffChart payoff={g.payoff} height={220} />}
+            <div className="col">
+              <div className="card">
+                <div className="card-header">
+                  <h3>Combined Payoff @ Expiry</h3>
+                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>spot {num(g.spot, 2)}</span>
+                </div>
+                {g.payoff
+                  ? <PayoffChart payoff={g.payoff} height={260} />
+                  : <div style={{ color: 'var(--muted)', fontSize: 12 }}>No payoff computed for this group.</div>}
+              </div>
             </div>
           </div>
         </div>
       ))}
+
+      <ConfirmDialog
+        open={!!exitTarget}
+        title="Confirm exit"
+        description={
+          `This will ${confirmText}. ` +
+          (exitDry
+            ? 'Dry-run: validates only — no orders are sent.'
+            : 'LIVE: market orders will be placed on Fyers.')
+        }
+        confirmLabel={exitDry ? 'Validate exit' : 'Send LIVE exit'}
+        cancelLabel="Cancel"
+        loading={submitting}
+        onConfirm={submitExit}
+        onCancel={() => setExitTarget(null)}
+      >
+        <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input type="checkbox" checked={exitDry} onChange={e => setExitDry(e.target.checked)} />
+          Dry run (validate only)
+        </label>
+      </ConfirmDialog>
     </div>
   )
 }

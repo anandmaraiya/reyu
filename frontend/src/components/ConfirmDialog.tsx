@@ -9,6 +9,7 @@ type ConfirmDialogProps = {
   loading?: boolean
   onConfirm: () => void
   onCancel: () => void
+  children?: ReactNode
 }
 
 export default function ConfirmDialog({
@@ -20,6 +21,7 @@ export default function ConfirmDialog({
   loading = false,
   onConfirm,
   onCancel,
+  children,
 }: ConfirmDialogProps) {
   if (!open) return null
 
@@ -30,6 +32,7 @@ export default function ConfirmDialog({
           <h3>{title}</h3>
         </div>
         <p className="confirm-description">{description}</p>
+        {children && <div className="confirm-extra" style={{ marginBottom: 12 }}>{children}</div>}
         <div className="confirm-actions">
           <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={loading}>
             {cancelLabel}
