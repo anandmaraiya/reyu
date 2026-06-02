@@ -33,7 +33,8 @@ class Instrument(Base):
     strike = Column(Float, nullable=True)
     option_type = Column(String, nullable=True)      # CE/PE/NULL
     underlying = Column(String, nullable=True)
-    tracked = Column(Integer, default=0)             # 1 if polled every minute
+    tracked = Column(Integer, default=0)             # 1 if scheduler polls it
+    tier = Column(Integer, default=2)                # 1 = high-priority (60s), 2 = low (300s)
 
 
 class Tick1m(Base):
@@ -75,11 +76,13 @@ async def init_db() -> None:
     """Create tables + promote time-series tables to Timescale hypertables."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Best-effort: works on Timescale image, no-op on plain PG
+        # Best-effort: works on Timescale image, no-op on plain PG. Also
+        # adds the `tier` column if upgrading from an older schema.
         for stmt in (
             "CREATE EXTENSION IF NOT EXISTS timescaledb",
             "SELECT create_hypertable('tick_1m', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
             "SELECT create_hypertable('option_snapshot', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
+            "ALTER TABLE instruments ADD COLUMN IF NOT EXISTS tier INTEGER DEFAULT 2",
         ):
             try:
                 await conn.execute(text(stmt))

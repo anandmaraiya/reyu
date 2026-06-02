@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import (
     auth, options, analytics, watchlist, portfolio, scalping,
-    timeseries, stream, orders, strategy, system, journal, notify,
+    timeseries, stream, orders, strategy, system, journal, notify, admin,
 )
 from app.store import store
 from app.db import init_db
@@ -49,6 +49,7 @@ app.include_router(strategy.router, prefix="/api/strategy", tags=["strategy"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(journal.router, prefix="/api/journal", tags=["journal"])
 app.include_router(notify.router, prefix="/api/notify", tags=["notify"])
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(stream.router, tags=["stream"])
 
 

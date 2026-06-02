@@ -68,7 +68,7 @@ export default function Audit() {
     <div className="page-shell">
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <h3 style={{ margin: 0 }}>Order Audit Timeline</h3>
+          <h3 style={{ margin: 0 }}>Timeline</h3>
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>{filtered.length} of {(data || []).length} entries</span>
           <select value={days} onChange={e => setDays(+e.target.value)}>
             <option value={1}>Last 24h</option>

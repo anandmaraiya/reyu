@@ -1,15 +1,17 @@
-"""APScheduler-driven 1-minute poller.
+"""APScheduler-driven background poller.
 
-For every symbol in `instruments.tracked=1` (seeded from TRACKED_SYMBOLS env),
-we pull:
-  - latest 1-min candle  -> tick_1m
-  - option chain         -> option_snapshot (PCR / OI / max-pain / atm IV)
+Two tiers:
+  tier=1 (high priority): polled every 60 seconds  — indices + top-30 stocks
+  tier=2 (low priority):  polled every 5 minutes   — broader F&O universe
 
-On each poll we also push the latest snapshot into Redis pub/sub channel
-`ticks:<symbol>` so the WebSocket fanout can deliver it to subscribers.
+Per-tier polls run as one APScheduler job and dispatch symbols concurrently
+through an asyncio.Semaphore so we don't hammer Fyers serially. With ~30
+high-priority symbols and a concurrency of 10, a poll loop finishes well
+inside 60 seconds.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
@@ -21,22 +23,44 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.config import settings
 from app.db import SessionLocal, Instrument, Tick1m, OptionSnapshot
 from app.fyers import client as fy
+from app.fno_universe import all_high_priority, all_low_priority
 from app.analytics.chain import normalize_chain, trade_bias
 from app.store import store
 
 log = logging.getLogger("reyu.scheduler")
 scheduler = AsyncIOScheduler()
 
+# Concurrent fetches per tier — tuned so a tier completes in well under its
+# polling interval. Adjust if you see Fyers rate-limit responses.
+HIGH_CONCURRENCY = 10
+LOW_CONCURRENCY = 5
+
 
 async def seed_tracked() -> None:
-    """Ensure each TRACKED_SYMBOLS row exists with tracked=1."""
+    """Ensure the full F&O universe is in `instruments` with tracked=1.
+
+    High-priority + env-listed symbols get tier=1; everything else tier=2.
+    Idempotent: re-running just re-applies tracked/tier.
+    """
+    env_extras = [x.strip() for x in settings.tracked_symbols.split(",") if x.strip()]
+    tier1 = set(all_high_priority()) | set(env_extras)
+    tier2 = set(all_low_priority()) - tier1
+
     async with SessionLocal() as s:
-        for sym in [x.strip() for x in settings.tracked_symbols.split(",") if x.strip()]:
-            stmt = pg_insert(Instrument).values(symbol=sym, tracked=1).on_conflict_do_update(
-                index_elements=[Instrument.symbol], set_={"tracked": 1}
-            )
-            await s.execute(stmt)
+        for sym in tier1:
+            await s.execute(pg_insert(Instrument).values(
+                symbol=sym, tracked=1, tier=1
+            ).on_conflict_do_update(
+                index_elements=[Instrument.symbol], set_={"tracked": 1, "tier": 1}
+            ))
+        for sym in tier2:
+            await s.execute(pg_insert(Instrument).values(
+                symbol=sym, tracked=1, tier=2
+            ).on_conflict_do_update(
+                index_elements=[Instrument.symbol], set_={"tracked": 1, "tier": 2}
+            ))
         await s.commit()
+    log.info("seeded tracked symbols — tier1=%d tier2=%d", len(tier1), len(tier2))
 
 
 async def _save_tick(symbol: str) -> None:
@@ -53,7 +77,7 @@ async def _save_tick(symbol: str) -> None:
     if not candles:
         return
     async with SessionLocal() as s:
-        for c in candles[-5:]:  # upsert last 5 candles to catch late prints
+        for c in candles[-5:]:
             ts = datetime.utcfromtimestamp(c[0])
             stmt = pg_insert(Tick1m).values(
                 ts=ts, symbol=symbol, open=c[1], high=c[2], low=c[3], close=c[4],
@@ -113,22 +137,52 @@ async def _save_snapshot(symbol: str) -> None:
     }, default=str))
 
 
-async def poll_all() -> None:
-    async with SessionLocal() as s:
-        rows = (await s.execute(select(Instrument).where(Instrument.tracked == 1))).scalars().all()
-    log.info("polling %d tracked symbols", len(rows))
-    for inst in rows:
+async def _poll_one(sym: str, sem: asyncio.Semaphore) -> None:
+    async with sem:
         try:
-            await _save_tick(inst.symbol)
-            await _save_snapshot(inst.symbol)
+            await _save_tick(sym)
+            await _save_snapshot(sym)
         except Exception as e:
-            log.exception("poll %s failed: %s", inst.symbol, e)
+            log.exception("poll %s failed: %s", sym, e)
+
+
+async def _poll_tier(tier: int, concurrency: int) -> None:
+    start = datetime.utcnow()
+    async with SessionLocal() as s:
+        rows = (await s.execute(
+            select(Instrument).where(Instrument.tracked == 1, Instrument.tier == tier)
+        )).scalars().all()
+    if not rows:
+        return
+    sem = asyncio.Semaphore(concurrency)
+    await asyncio.gather(*[_poll_one(r.symbol, sem) for r in rows])
+    elapsed = (datetime.utcnow() - start).total_seconds()
+    log.info("tier-%d polled %d symbols in %.1fs", tier, len(rows), elapsed)
+    await store.r.set(f"poll:last:{tier}", datetime.utcnow().isoformat(), ex=24 * 3600)
+
+
+async def poll_high() -> None:
+    await _poll_tier(1, HIGH_CONCURRENCY)
+
+
+async def poll_low() -> None:
+    await _poll_tier(2, LOW_CONCURRENCY)
+
+
+async def poll_all() -> None:
+    """Back-compat: kicked off once on startup so tier-2 gets seeded data."""
+    await poll_high()
+    await poll_low()
 
 
 def start() -> None:
-    scheduler.add_job(poll_all, "interval", seconds=settings.snapshot_interval_sec,
-                      id="poll_all", max_instances=1, coalesce=True)
+    scheduler.add_job(poll_high, "interval", seconds=settings.snapshot_interval_sec,
+                      id="poll_high", max_instances=1, coalesce=True)
+    scheduler.add_job(poll_low, "interval", seconds=max(settings.snapshot_interval_sec * 5, 300),
+                      id="poll_low", max_instances=1, coalesce=True)
     scheduler.start()
+    log.info("scheduler started — high every %ds, low every %ds",
+             settings.snapshot_interval_sec, max(settings.snapshot_interval_sec * 5, 300))
 
 
 def stop() -> None:

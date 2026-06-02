@@ -26,37 +26,74 @@ export default function Portfolios() {
   }
   const del = async (n: string) => { await api.delete(`/api/portfolio/${encodeURIComponent(n)}`); qc.invalidateQueries({ queryKey: ['portfolios'] }) }
 
+  const Field = ({ label, children, w }: { label: string; children: React.ReactNode; w?: number }) => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: w }}>
+      <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: .5 }}>{label}</span>
+      {children}
+    </div>
+  )
+
+  const portfolios = data ? Object.entries(data) : []
+
   return (
-    <div>
-      <div className="card" style={{ marginBottom: 12 }}>
-        <h3>New Portfolio</h3>
-        <div className="row">
-          <input className="input" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} placeholder="Portfolio name" />
-          <select value={draft.style} onChange={e => setDraft({ ...draft, style: e.target.value })}>
-            <option>SCALP</option><option>SWING</option><option>HEDGED</option>
-          </select>
-          <input className="input" type="number" value={draft.capital} onChange={e => setDraft({ ...draft, capital: +e.target.value })} placeholder="Capital" />
+    <div className="page-shell">
+      <div className="card">
+        <div className="card-header">
+          <h3>New Portfolio</h3>
+          <span style={{ fontSize: 11, color: 'var(--muted)' }}>Build a tracking book — name it, set your capital, add legs.</span>
         </div>
-        <div className="row" style={{ marginTop: 8 }}>
-          <input className="input" placeholder="Symbol" value={legDraft.symbol} onChange={e => setLegDraft({ ...legDraft, symbol: e.target.value })} />
-          <select value={legDraft.action} onChange={e => setLegDraft({ ...legDraft, action: e.target.value as any })}><option>BUY</option><option>SELL</option></select>
-          <input className="input" type="number" placeholder="Qty" value={legDraft.qty} onChange={e => setLegDraft({ ...legDraft, qty: +e.target.value })} style={{ width: 80 }} />
-          <input className="input" type="number" placeholder="Entry" value={legDraft.entry_price} onChange={e => setLegDraft({ ...legDraft, entry_price: +e.target.value })} style={{ width: 100 }} />
-          <button onClick={addLeg}>+ Leg</button>
-          <button className="primary" onClick={save}>Save Portfolio</button>
+        <div className="row" style={{ alignItems: 'flex-end' }}>
+          <Field label="Name" w={200}>
+            <input className="input" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} placeholder="e.g. Bull-call NIFTY weekly" />
+          </Field>
+          <Field label="Style" w={140}>
+            <select value={draft.style} onChange={e => setDraft({ ...draft, style: e.target.value })}>
+              <option>SCALP</option><option>SWING</option><option>HEDGED</option>
+            </select>
+          </Field>
+          <Field label="Capital (₹)" w={140}>
+            <input className="input" type="number" value={draft.capital} onChange={e => setDraft({ ...draft, capital: +e.target.value })} />
+          </Field>
+        </div>
+        <div className="row" style={{ marginTop: 12, alignItems: 'flex-end' }}>
+          <Field label="Symbol" w={220}>
+            <input className="input" placeholder="NSE:NIFTY2660923500CE" value={legDraft.symbol} onChange={e => setLegDraft({ ...legDraft, symbol: e.target.value })} />
+          </Field>
+          <Field label="Action" w={90}>
+            <select value={legDraft.action} onChange={e => setLegDraft({ ...legDraft, action: e.target.value as any })}>
+              <option>BUY</option><option>SELL</option>
+            </select>
+          </Field>
+          <Field label="Quantity" w={90}>
+            <input className="input" type="number" min={1} value={legDraft.qty} onChange={e => setLegDraft({ ...legDraft, qty: +e.target.value })} />
+          </Field>
+          <Field label="Entry ₹" w={110}>
+            <input className="input" type="number" step={0.05} value={legDraft.entry_price} onChange={e => setLegDraft({ ...legDraft, entry_price: +e.target.value })} />
+          </Field>
+          <button onClick={addLeg}>+ Add leg</button>
+          <button className="primary" onClick={save} disabled={draft.legs.length === 0}>Save portfolio</button>
         </div>
         {draft.legs.length > 0 && (
           <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>
-            {draft.legs.length} leg(s) staged: {draft.legs.map(l => `${l.action} ${l.qty} ${l.symbol}`).join(' | ')}
+            <strong>{draft.legs.length} leg(s) staged:</strong> {draft.legs.map(l => `${l.action} ${l.qty} ${l.symbol}`).join(' · ')}
           </div>
         )}
       </div>
 
-      <div className="row">
-        {data && Object.entries(data).map(([name, p]: any) => (
-          <PortfolioCard key={name} name={name} p={p} onDelete={() => del(name)} />
-        ))}
-      </div>
+      {portfolios.length === 0 ? (
+        <div className="card" style={{ textAlign: 'center', color: 'var(--muted)', padding: '32px 16px' }}>
+          <div style={{ fontSize: 30, marginBottom: 6 }}>📊</div>
+          <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>No portfolios yet</div>
+          Save your first portfolio above to see live P&amp;L, aggregated Greeks, Sharpe / MaxDD,
+          and risk-cap violations side-by-side.
+        </div>
+      ) : (
+        <div className="grid-3">
+          {portfolios.map(([name, p]: any) => (
+            <PortfolioCard key={name} name={name} p={p} onDelete={() => del(name)} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

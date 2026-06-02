@@ -2,6 +2,7 @@ import { Chain } from '../api'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer, Legend,
 } from 'recharts'
+import { chartTooltipStyles } from '../chartTheme'
 
 const num = (n: any, d = 2) => n == null ? '—' : Number(n).toLocaleString(undefined, { maximumFractionDigits: d })
 const pct = (n: any) => n == null ? '—' : (Number(n) * 100).toFixed(1) + '%'
@@ -99,7 +100,7 @@ export default function StrikeDetailPanel({ chain, strike }: Props) {
             <XAxis dataKey="strike" tick={{ fontSize: 10, fill: '#94a3b8' }} />
             <YAxis yAxisId="oi" tick={{ fontSize: 10, fill: '#94a3b8' }} tickFormatter={(v) => v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v} />
             <YAxis yAxisId="iv" orientation="right" tick={{ fontSize: 10, fill: '#94a3b8' }} unit="%" />
-            <Tooltip contentStyle={{ background: '#0f1422', border: '1px solid #1f2937', fontSize: 11 }} />
+            <Tooltip {...chartTooltipStyles()} />
             <Legend wrapperStyle={{ fontSize: 10 }} />
             <ReferenceLine x={effectiveStrike} stroke="var(--accent)" strokeDasharray="3 3" yAxisId="oi" />
             <Bar yAxisId="oi" dataKey="CE OI" fill="#dc2626" opacity={0.7} />

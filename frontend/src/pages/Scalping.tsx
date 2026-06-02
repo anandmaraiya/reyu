@@ -18,17 +18,37 @@ export default function Scalping() {
   })
 
   return (
-    <div>
-      <div className="card" style={{ marginBottom: 12 }}>
-        <h3>Scalping Scanner</h3>
-        <div className="row">
-          <select value={wl} onChange={e => setWl(e.target.value)}>
-            <option value="">Select watchlist…</option>
+    <div className="page-shell">
+      <div className="card">
+        <div className="card-header">
+          <h3>Live Signal Scanner</h3>
+          <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+            Scans a watchlist for short-term setups (bias × intraday momentum) and surfaces ATM legs to act on.
+          </span>
+        </div>
+        <div className="row" style={{ alignItems: 'center' }}>
+          <select value={wl} onChange={e => setWl(e.target.value)} style={{ minWidth: 220 }}>
+            <option value="">Select a watchlist…</option>
             {wls && Object.keys(wls).map(n => <option key={n}>{n}</option>)}
           </select>
-          <button className="primary" onClick={() => refetch()}>{isFetching ? '…' : 'Scan'}</button>
+          <button className="primary" onClick={() => refetch()} disabled={!wl}>
+            {isFetching ? 'Scanning…' : 'Scan'}
+          </button>
+          {!wl && <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+            Need a watchlist first? Create one under <a href="/watchlists">Watchlists</a>.
+          </span>}
         </div>
       </div>
+
+      {!scan && (
+        <div className="card" style={{ textAlign: 'center', color: 'var(--muted)', padding: '32px 16px' }}>
+          <div style={{ fontSize: 30, marginBottom: 6 }}>⚡</div>
+          <div style={{ fontWeight: 600, color: 'var(--text)' }}>Pick a watchlist and hit Scan</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>
+            Signals refresh every 20 seconds once scanning starts.
+          </div>
+        </div>
+      )}
 
       {scan && (
         <>

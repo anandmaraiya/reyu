@@ -15,6 +15,7 @@ import { Chain, Strike } from '../api'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Legend, Cell,
 } from 'recharts'
+import { chartTooltipStyles } from '../chartTheme'
 
 type Mode = 'BUILDUP' | 'OI_VS_CHANGE'
 
@@ -128,7 +129,7 @@ export default function OIBuildup({ chain, window = 4, mode = 'BUILDUP' }: Props
             <XAxis dataKey="strike" tick={{ fontSize: 10, fill: '#94a3b8' }} />
             <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }}
                    tickFormatter={(v) => Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : v} />
-            <Tooltip contentStyle={{ background: '#0f1422', border: '1px solid #1f2937', fontSize: 11 }}
+            <Tooltip {...chartTooltipStyles()}
                      formatter={(v: any, n: string, p: any) => {
                        const cls = n === 'CE' ? p.payload.CE_CLS : p.payload.PE_CLS
                        return [Number(v).toLocaleString(), `${n} · ${LABEL[cls as ClassifiedLeg]}`]

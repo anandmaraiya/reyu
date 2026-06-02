@@ -5,6 +5,7 @@ import {
   LineChart, Line, BarChart, Bar, ComposedChart, XAxis, YAxis, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine,
 } from 'recharts'
+import { chartTooltipStyles } from '../chartTheme'
 
 type Row = {
   ts: string; ltp: number; pcr_oi: number; pcr_volume: number; max_pain: number
@@ -59,7 +60,7 @@ export default function PCRTimeSeries({ symbol }: { symbol: string }) {
               <LineChart data={rows} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
                 <XAxis dataKey="ts" tickFormatter={fmtTime} tick={{ fontSize: 10, fill: '#94a3b8' }} />
                 <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} domain={['auto', 'auto']} />
-                <Tooltip contentStyle={{ background: '#0f1422', border: '1px solid #1f2937' }}
+                <Tooltip {...chartTooltipStyles()}
                          labelFormatter={fmtTime} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <ReferenceLine y={1} stroke="#94a3b8" strokeDasharray="3 3" />
@@ -74,7 +75,7 @@ export default function PCRTimeSeries({ symbol }: { symbol: string }) {
               <ComposedChart data={rows} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
                 <XAxis dataKey="ts" tickFormatter={fmtTime} tick={{ fontSize: 10, fill: '#94a3b8' }} />
                 <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                <Tooltip contentStyle={{ background: '#0f1422', border: '1px solid #1f2937' }}
+                <Tooltip {...chartTooltipStyles()}
                          labelFormatter={fmtTime} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <ReferenceLine y={0} stroke="#94a3b8" />

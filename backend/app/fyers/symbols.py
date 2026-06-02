@@ -33,10 +33,47 @@ INDEX_LOTS = {
     "BANKEX": 30,
 }
 
-OPTION_RE = re.compile(r"^([A-Z]+):([A-Z]+)(\d{2}[A-Z0-9]{3,5})(\d+)(CE|PE)$")
 FUTURE_RE = re.compile(r"^([A-Z]+):([A-Z]+)(\d{2}[A-Z]{3})FUT$")
 EQUITY_RE = re.compile(r"^([A-Z]+):([A-Z0-9&-]+)-EQ$")
 INDEX_RE = re.compile(r"^([A-Z]+):([A-Z0-9]+)-INDEX$")
+
+
+def _parse_option(symbol: str):
+    """Parse a Fyers option symbol.
+
+    Fyers v3 uses two formats interchangeably, both with a fixed 5-char
+    expiry block sitting between the underlying letters and the strike:
+      Monthly:  NSE:NIFTY25JAN24800CE  → expiry "25JAN" (YY + MMM)
+      Weekly:   NSE:NIFTY2660923450CE  → expiry "26609" (YY + M + DD where M
+                                                          is the month code: 1-9, O, N, D)
+
+    Because the weekly expiry is all-digits, naively walking the trailing
+    digit run absorbs the expiry into the strike. We instead grab the 5
+    chars immediately after the alphabetic underlying as the expiry block,
+    then the digit run after that is the strike.
+    """
+    if len(symbol) < 6 or symbol[-2:] not in ("CE", "PE"):
+        return None
+    if ":" not in symbol:
+        return None
+    opt = symbol[-2:]
+    body = symbol[:-2]
+    exch, _, after = body.partition(":")
+    if not after:
+        return None
+    j = 0
+    while j < len(after) and after[j].isalpha():
+        j += 1
+    underlying = after[:j]
+    # 5-char expiry block, then strike digits
+    rest = after[j:]
+    if len(rest) < 6:                     # need 5 expiry + ≥1 strike digit
+        return None
+    expiry = rest[:5]
+    strike_str = rest[5:]
+    if not strike_str.isdigit():
+        return None
+    return exch, underlying, float(strike_str), opt, expiry
 
 
 @dataclass
@@ -54,9 +91,9 @@ class SymbolInfo:
 def parse(symbol: str) -> SymbolInfo:
     symbol = symbol.strip().upper()
 
-    if m := OPTION_RE.match(symbol):
-        _, scrip, _expiry, strike, opt = m.groups()
-        return SymbolInfo(symbol, "OPTION", scrip, float(strike), opt,
+    if parsed := _parse_option(symbol):
+        _exch, scrip, strike, opt, _expiry = parsed
+        return SymbolInfo(symbol, "OPTION", scrip, strike, opt,
                           INDEX_LOTS.get(scrip, 0), 0.05, True)
 
     if m := FUTURE_RE.match(symbol):

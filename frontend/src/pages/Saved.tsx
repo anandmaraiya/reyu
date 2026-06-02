@@ -106,7 +106,7 @@ export default function Saved() {
     <div className="page-shell">
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <h3 style={{ margin: 0 }}>Saved Strategies</h3>
+          <h3 style={{ margin: 0 }}>Filter</h3>
           <input className="input" placeholder="Search by name / underlying"
                  value={q} onChange={e => setQ(e.target.value)} style={{ minWidth: 220 }} />
           <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>

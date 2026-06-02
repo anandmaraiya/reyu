@@ -1,6 +1,7 @@
 import {
   ComposedChart, Line, Area, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer,
 } from 'recharts'
+import { chartTooltipStyles } from '../chartTheme'
 
 export type Payoff = {
   spot: number
@@ -31,7 +32,7 @@ export default function PayoffChart({ payoff, height = 280 }: { payoff: Payoff; 
             <XAxis dataKey="S" tick={{ fontSize: 10, fill: '#94a3b8' }}
                    tickFormatter={(v) => fmt(v, 0)} />
             <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} tickFormatter={(v) => fmt(v, 0)} />
-            <Tooltip contentStyle={{ background: '#0f1422', border: '1px solid #1f2937' }}
+            <Tooltip {...chartTooltipStyles()}
                      formatter={(v: any) => `₹ ${fmt(v, 0)}`}
                      labelFormatter={(v) => `Spot ${fmt(v as number, 0)}`} />
             <ReferenceLine y={0} stroke="#94a3b8" />

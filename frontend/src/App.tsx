@@ -30,7 +30,7 @@ const NAV: NavGroup[] = [
     { to: '/strategy', label: 'Strategy Builder', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M11 18h6"/></svg> },
     { to: '/compare', label: 'Compare Strategies', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h6v12H4z"/><path d="M14 9h6v9h-6z"/></svg> },
     { to: '/positions', label: 'Positions', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19h16"/><path d="M7 15l3-3 2 2 5-5"/><path d="M8 11V7h8v2"/></svg> },
-    { to: '/scalping', label: 'Scalping', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M6 18l6-6 6 6"/><path d="M6 6l6 6 6-6"/></svg> },
+    { to: '/scalping', label: 'Scalping', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg> },
   ]},
   { group: 'Manage', items: [
     { to: '/watchlists', label: 'Watchlists', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg> },
@@ -64,6 +64,7 @@ const PAGE_TITLE_MAP: Record<string, string> = {
   '/scalping': 'Scalping',
   '/saved': 'Saved Strategies',
   '/audit': 'Order Audit',
+  '/subscription': 'Subscription',
   '/settings': 'Settings',
   '/login': 'Login',
 }
@@ -158,13 +159,15 @@ export default function App() {
           </div>
 
           <div className="page-actions">
-            <div className="search-field">
-              <span className="search-icon">🔎</span>
-              <input type="search" placeholder="Search symbol, strategy, alert..." aria-label="Global search" />
-            </div>
-            <button type="button" className="icon-button" aria-label="Notifications">
+            <button type="button" className="icon-button" aria-label="Command palette (⌘K)"
+                    title="Command palette · ⌘K / Ctrl+K"
+                    onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))}>
+              <span>🔎</span>
+            </button>
+            <button type="button" className="icon-button" aria-label="Notifications"
+                    title="Notifications (coming soon)"
+                    onClick={() => alert('Notification centre coming soon — webhook alerts are in Settings.')}>
               <span>🔔</span>
-              <span className="badge-glow">3</span>
             </button>
           </div>
         </div>

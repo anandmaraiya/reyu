@@ -4,6 +4,7 @@ import { api } from '../api'
 import {
   ComposedChart, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer, Legend,
 } from 'recharts'
+import { chartTooltipStyles } from '../chartTheme'
 
 const num = (n: any, d = 2) => n == null ? '—' : Number(n).toLocaleString(undefined, { maximumFractionDigits: d })
 const COLOURS = ['#60a5fa', '#f59e0b', '#16a34a', '#a855f7']
@@ -68,7 +69,7 @@ export default function Compare() {
   return (
     <div className="page-shell">
       <div className="card" style={{ marginBottom: 12 }}>
-        <h3>Strategy Comparison — up to 4</h3>
+        <h3>Pick up to 4 strategies</h3>
         <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
           {slots.map((s, i) => (
             <select key={i} value={s} onChange={e => setSlots(p => p.map((x, j) => j === i ? e.target.value : x))}>
@@ -87,7 +88,7 @@ export default function Compare() {
               <ComposedChart data={series}>
                 <XAxis dataKey="S" tick={{ fontSize: 10, fill: '#94a3b8' }} tickFormatter={(v) => num(v, 0)} />
                 <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} tickFormatter={(v) => num(v, 0)} />
-                <Tooltip contentStyle={{ background: '#0f1422', border: '1px solid #1f2937' }} />
+                <Tooltip {...chartTooltipStyles()} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <ReferenceLine y={0} stroke="#94a3b8" />
                 {spot && <ReferenceLine x={spot} stroke="var(--accent)" strokeDasharray="3 3" label={{ value: 'Spot', fontSize: 10 }} />}

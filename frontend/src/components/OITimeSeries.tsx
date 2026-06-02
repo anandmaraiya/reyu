@@ -13,6 +13,7 @@ import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Legend, ReferenceLine,
 } from 'recharts'
+import { chartTooltipStyles } from '../chartTheme'
 
 const fmtTime = (iso: string) => {
   try {
@@ -190,7 +191,7 @@ export default function OITimeSeries({ symbol, chain, interval = '5m', defaultMo
                    tickFormatter={(v) => Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                    label={{ value: 'Price (₹)', angle: 90, position: 'insideRight',
                             fill: '#64748b', fontSize: 10, dy: -30 }} />
-            <Tooltip contentStyle={{ background: '#0f1422', border: '1px solid #1f2937', fontSize: 11 }}
+            <Tooltip {...chartTooltipStyles()}
                      formatter={(v: any, n: string) => {
                        const meta = Object.entries(SERIES_META).find(([k]) => SERIES_META[k as SeriesKey].label === n)
                        const isRight = meta && meta[1].axis === 'right'

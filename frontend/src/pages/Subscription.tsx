@@ -38,7 +38,7 @@ const TIERS: Tier[] = [
       { label: 'Strategy Builder (4 legs)', included: true },
       { label: 'Saved strategies', included: 'unlimited' },
       { label: 'Hedge builder + margin', included: true },
-      { label: 'IV smile + Greeks heatmap', included: true },
+      { label: 'IV smile + skew analytics', included: true },
       { label: 'PCR / OI time series', included: true },
       { label: 'Webhook alerts (Telegram/Discord)', included: true },
       { label: 'API access', included: false },

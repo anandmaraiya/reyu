@@ -7,7 +7,7 @@ type RecommendationPanelProps = {
 
 function formatChange(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return '—'
-  return `${value > 0 ? '+' : ''}${value.toFixed(0)}%`
+  return `${value > 0 ? '+' : ''}${value.toFixed(0)}`
 }
 
 function getConfidence(pcr: number) {
@@ -38,7 +38,9 @@ export default function RecommendationPanel({ chain }: RecommendationPanelProps)
       <div className="recommendation-summary">
         <div>
           <div className="recommendation-title">{suggested}</div>
-          <div className="recommendation-copy">Based on bias, PCR, IV skew, and OI movement for {chain.underlying}.</div>
+          <div className="recommendation-copy">
+            Based on bias, PCR, IV skew, and OI movement{chain.underlying ? ` for ${chain.underlying}` : ''}.
+          </div>
         </div>
         <div className="recommendation-quote">
           <span>{bias}</span>

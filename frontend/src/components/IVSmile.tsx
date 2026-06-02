@@ -1,5 +1,6 @@
 import { Chain } from '../api'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer, Legend } from 'recharts'
+import { chartTooltipStyles } from '../chartTheme'
 
 export default function IVSmile({ chain }: { chain: Chain }) {
   const data = chain.strikes.map(s => ({
@@ -31,7 +32,8 @@ export default function IVSmile({ chain }: { chain: Chain }) {
           <LineChart data={data} margin={{ top: 6, right: 12, bottom: 0, left: 0 }}>
             <XAxis dataKey="strike" tick={{ fontSize: 10, fill: '#94a3b8' }} />
             <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} unit="%" />
-            <Tooltip contentStyle={{ background: '#0f1422', border: '1px solid #1f2937' }} />
+            <Tooltip {...chartTooltipStyles()}
+                     formatter={(v: any, n: string) => [v == null ? '—' : `${Number(v).toFixed(2)}%`, n.replace('_', ' ')]} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
             <ReferenceLine x={chain.summary.atm_strike} stroke="#60a5fa" strokeDasharray="3 3"
                            label={{ value: 'ATM', fill: '#60a5fa', fontSize: 10 }} />

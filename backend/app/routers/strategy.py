@@ -25,6 +25,12 @@ class StrategyLeg(BaseModel):
     action: Literal["BUY", "SELL"]
     qty: int
     price: float = 0
+    # Optional hints from the frontend — when present they override what the
+    # backend would otherwise derive from regex / chain lookup. Critical
+    # because the symbol regex can mis-parse strikes for weekly Fyers
+    # encodings (e.g. NSE:NIFTY2660923450CE).
+    strike: float | None = None
+    option_type: Literal["CE", "PE"] | None = None
 
 
 class StrategyRequest(BaseModel):
@@ -50,10 +56,15 @@ async def _enrich_legs(req_legs: list[StrategyLeg], chain: dict) -> list[dict]:
         info = await resolve(rl.symbol)
         m = chain_lookup.get(rl.symbol, {})
         price = rl.price or m.get("ltp", 0)
+        # Resolution priority:
+        #   1) explicit hint from the frontend (most reliable — UI selected from chain)
+        #   2) chain_lookup match (works when the chain is loaded and includes this strike)
+        #   3) symbol-parser fallback (last resort, can mis-parse weekly Fyers symbols)
+        strike = rl.strike if rl.strike is not None else (m.get("strike") if m.get("strike") is not None else info.strike)
+        option_type = rl.option_type or m.get("option_type") or info.option_type
         out.append({
             "symbol": rl.symbol, "instrument": info.instrument,
-            "strike": m.get("strike") or info.strike,
-            "option_type": m.get("option_type") or info.option_type,
+            "strike": strike, "option_type": option_type,
             "action": rl.action, "qty": rl.qty, "price": price,
             "delta": m.get("delta"), "gamma": m.get("gamma"),
             "theta": m.get("theta"), "vega": m.get("vega"),
@@ -194,18 +205,40 @@ async def positions_by_ticker():
             "pl": float(p.get("pl") or 0),
         })
 
+    # Map common F&O underlying scrips to their canonical Fyers index/equity symbol.
+    # Without this the previous fallback averaged option PREMIUMS as "spot",
+    # producing absurd payoff charts (e.g. NIFTY shown at 67 instead of 23,483).
+    INDEX_MAP = {
+        "NIFTY": "NSE:NIFTY50-INDEX",
+        "BANKNIFTY": "NSE:NIFTYBANK-INDEX",
+        "FINNIFTY": "NSE:FINNIFTY-INDEX",
+        "MIDCPNIFTY": "NSE:MIDCPNIFTY-INDEX",
+        "NIFTYNXT50": "NSE:NIFTYNXT50-INDEX",
+        "SENSEX": "BSE:SENSEX-INDEX",
+        "BANKEX": "BSE:BANKEX-INDEX",
+    }
+
     groups = []
     for under, legs in grouped.items():
-        underlying_sym = next((f"NSE:{under}-INDEX" for l in legs if l["instrument"] == "OPTION"),
-                              f"NSE:{under}-EQ")
+        has_option = any(l["instrument"] == "OPTION" for l in legs)
+        underlying_sym = INDEX_MAP.get(under) if has_option else f"NSE:{under}-EQ"
         spot = None
-        try:
-            q = await fy.quotes([underlying_sym])
-            spot = (q.get("d", [{}])[0].get("v", {}).get("lp")) if isinstance(q, dict) else None
-        except Exception:
-            pass
+        if underlying_sym:
+            try:
+                q = await fy.quotes([underlying_sym])
+                spot = (q.get("d", [{}])[0].get("v", {}).get("lp")) if isinstance(q, dict) else None
+            except Exception:
+                pass
         if not spot:
-            spot = sum(l["ltp"] * l["qty"] for l in legs) / max(sum(l["qty"] for l in legs), 1)
+            # Best fallback when we cannot fetch the underlying — use the
+            # weighted-average STRIKE of the open option legs (still wrong but
+            # at least lives in the right order of magnitude).
+            opt_legs = [l for l in legs if l.get("strike")]
+            if opt_legs:
+                w = sum(l["qty"] for l in opt_legs) or 1
+                spot = sum(l["strike"] * l["qty"] for l in opt_legs) / w
+            else:
+                spot = sum(l["ltp"] * l["qty"] for l in legs) / max(sum(l["qty"] for l in legs), 1)
         payoff = compute_payoff(legs, spot=spot, range_pct=0.10)
         margin = await estimate_margin(legs, payoff=payoff, spot=spot)
 

@@ -9,7 +9,6 @@ import HedgeBuilder from '../components/HedgeBuilder'
 import PCRTimeSeries from '../components/PCRTimeSeries'
 import OrderModal from '../components/OrderModal'
 import IVSmile from '../components/IVSmile'
-import GreeksHeatmap from '../components/GreeksHeatmap'
 import KeyLevelsStrip from '../components/KeyLevelsStrip'
 import RecommendationPanel from '../components/RecommendationPanel'
 import FilterBar from '../components/FilterBar'
@@ -20,19 +19,26 @@ import { LoadingSkeleton } from '../components/LoadingStates'
 import { useToast } from '../toast'
 import { downloadCSV } from '../utils/csv'
 
+// Twelve quick-tickers — the indices first, then top-volume stock derivatives.
+// Order matters: this is what the user sees in the pill row, left to right.
 const SYMBOL_GROUPS = [
-  { label: 'NIFTY', value: 'NSE:NIFTY50-INDEX' },
-  { label: 'BANKNIFTY', value: 'NSE:BANKNIFTY-INDEX' },
-  { label: 'FINNIFTY', value: 'NSE:FINNIFTY-INDEX' },
+  { label: 'NIFTY',      value: 'NSE:NIFTY50-INDEX' },
+  { label: 'BANKNIFTY',  value: 'NSE:NIFTYBANK-INDEX' },
+  { label: 'FINNIFTY',   value: 'NSE:FINNIFTY-INDEX' },
+  { label: 'MIDCPNIFTY', value: 'NSE:MIDCPNIFTY-INDEX' },
+  { label: 'SENSEX',     value: 'BSE:SENSEX-INDEX' },
+  { label: 'RELIANCE',   value: 'NSE:RELIANCE-EQ' },
+  { label: 'HDFCBANK',   value: 'NSE:HDFCBANK-EQ' },
+  { label: 'ICICIBANK',  value: 'NSE:ICICIBANK-EQ' },
+  { label: 'TCS',        value: 'NSE:TCS-EQ' },
+  { label: 'INFY',       value: 'NSE:INFY-EQ' },
+  { label: 'SBIN',       value: 'NSE:SBIN-EQ' },
+  { label: 'TATAMOTORS', value: 'NSE:TATAMOTORS-EQ' },
 ]
 
-const POPULAR_SYMBOLS = [
-  'NSE:NIFTY50-INDEX',
-  'NSE:BANKNIFTY-INDEX',
-  'NSE:FINNIFTY-INDEX',
-  'NSE:MIDCPNIFTY-INDEX',
-  'BSE:SENSEX-INDEX',
-]
+// Tracked F&O universe — fetched once from /api/ts/instruments and used as
+// the autocomplete pool. Falls back to SYMBOL_GROUPS if the API is offline.
+const FALLBACK_SYMBOLS = SYMBOL_GROUPS.map(g => g.value)
 
 type OptionChainTableTradableProps = {
   chain: Chain
@@ -87,13 +93,35 @@ export default function Dashboard() {
   })
 
   const currentSymbol = useMemo(() => SYMBOL_GROUPS.find(item => item.value === symbol) ?? SYMBOL_GROUPS[0], [symbol])
+
+  // Pull the seeded F&O universe (~186 symbols) for autocomplete.
+  const { data: universe } = useQuery<{ symbol: string }[]>({
+    queryKey: ['universe'],
+    queryFn: async () => (await api.get('/api/ts/instruments', { params: { tracked_only: true } })).data,
+    staleTime: 5 * 60 * 1000,
+  })
+  const symbolPool = useMemo(
+    () => (universe?.length ? universe.map(i => i.symbol) : FALLBACK_SYMBOLS),
+    [universe],
+  )
+
   const symbolSuggestions = useMemo(() => {
     const query = input.trim().toUpperCase()
-    if (!query) return []
-    return [...new Set([...searchHistory, ...POPULAR_SYMBOLS])]
-      .filter(item => item.toUpperCase().includes(query))
-      .slice(0, 6)
-  }, [input, searchHistory])
+    const pillValues = new Set(SYMBOL_GROUPS.map(g => g.value))
+    if (!query) {
+      // Empty search → only recent history items that AREN'T already in the
+      // pill row above (no point showing NIFTY twice) and aren't the current
+      // active symbol.
+      return searchHistory.filter(s => s !== symbol && !pillValues.has(s)).slice(0, 6)
+    }
+    const matches = symbolPool.filter(s => s.toUpperCase().includes(query) && s !== symbol)
+    matches.sort((a, b) => {
+      const aPre = a.toUpperCase().indexOf(query)
+      const bPre = b.toUpperCase().indexOf(query)
+      return aPre - bPre || a.localeCompare(b)
+    })
+    return matches.slice(0, 10)
+  }, [input, searchHistory, symbolPool, symbol])
 
   useEffect(() => {
     const saved = localStorage.getItem('dashboard_search_history')
@@ -137,7 +165,7 @@ export default function Dashboard() {
     <div className="page-shell">
       <div className="page-toolbar">
         <FilterBar
-          title="Option Chain"
+          title=""
           searchValue={input}
           onSearch={setInput}
           onSearchFocus={() => undefined}
@@ -222,11 +250,10 @@ export default function Dashboard() {
       {/* KPI strip — full width, prominent */}
       {data && <SummaryStrip chain={data} />}
 
-      {/* Analytical charts — three equal-weight cards */}
+      {/* Analytical charts — two equal-weight cards */}
       {data && (
-        <div className="grid-3">
+        <div className="grid-2">
           <div className="col"><IVSmile chain={data} /></div>
-          <div className="col"><GreeksHeatmap chain={data} /></div>
           <div className="col">
             <div className="card">
               <div className="card-header"><h3>OI Distribution</h3></div>
@@ -248,7 +275,10 @@ export default function Dashboard() {
       <div className="grid-main">
         <div className="col">
           <div className="card">
-            <div className="card-header"><h3>Option Chain — hover any row for live context · click ATM CE/PE to trade</h3></div>
+            <div className="card-header">
+              <h3>Strike Ladder</h3>
+              <span style={{ fontSize: 11, color: 'var(--muted)' }}>hover a row for context · click ATM CE/PE to trade</span>
+            </div>
             {data ? (
               <OptionChainTableTradable
                 chain={data}

@@ -3,6 +3,7 @@ import { Chain } from '../api'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ReferenceLine, Cell,
 } from 'recharts'
+import { chartTooltipStyles } from '../chartTheme'
 
 type Strike = Chain['strikes'][number]
 type View = 'OI' | 'CHANGE'
@@ -55,24 +56,27 @@ export default function OIChart({ chain, windowSize = 25 }: { chain: Chain; wind
             <XAxis dataKey="strike" tick={{ fontSize: 10, fill: '#94a3b8' }} />
             <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }}
                    tickFormatter={(v) => Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : v} />
-            <Tooltip contentStyle={{ background: '#0f1422', border: '1px solid #1f2937' }}
-                     formatter={(v: number) => v.toLocaleString()} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Tooltip {...chartTooltipStyles()} formatter={(v: number) => v.toLocaleString()} />
+            <Legend wrapperStyle={{ fontSize: 11 }}
+                    payload={[
+                      { value: view === 'OI' ? 'CE OI' : 'CE ΔOI', type: 'rect', color: '#dc2626', id: 'CE' },
+                      { value: view === 'OI' ? 'PE OI' : 'PE ΔOI', type: 'rect', color: '#16a34a', id: 'PE' },
+                    ]} />
             {view === 'CHANGE' && <ReferenceLine y={0} stroke="#94a3b8" />}
             {atm && (
               <ReferenceLine x={closestStrike(atm)} stroke="var(--accent)" strokeDasharray="4 4"
-                             label={{ value: 'ATM', fill: 'var(--accent)', fontSize: 10, position: 'insideTopLeft' }} />
+                             label={{ value: 'ATM', fill: 'var(--accent)', fontSize: 10, position: 'top', offset: 4 }} />
             )}
-            {maxPain && (
+            {maxPain && maxPain !== atm && (
               <ReferenceLine x={closestStrike(maxPain)} stroke="var(--amber)" strokeDasharray="2 4"
-                             label={{ value: 'Max Pain', fill: 'var(--amber)', fontSize: 10, position: 'insideTopRight' }} />
+                             label={{ value: 'Max Pain', fill: 'var(--amber)', fontSize: 10, position: 'insideBottom', offset: 4 }} />
             )}
-            <Bar dataKey="CE" name={view === 'OI' ? 'CE OI' : 'CE ΔOI'} animationDuration={400}>
+            <Bar dataKey="CE" name={view === 'OI' ? 'CE OI' : 'CE ΔOI'} animationDuration={400} legendType="none">
               {chartData.map((d, i) => (
                 <Cell key={i} fill={d.CE >= 0 ? '#dc2626' : 'rgba(220,38,38,0.45)'} />
               ))}
             </Bar>
-            <Bar dataKey="PE" name={view === 'OI' ? 'PE OI' : 'PE ΔOI'} animationDuration={400}>
+            <Bar dataKey="PE" name={view === 'OI' ? 'PE OI' : 'PE ΔOI'} animationDuration={400} legendType="none">
               {chartData.map((d, i) => (
                 <Cell key={i} fill={d.PE >= 0 ? '#16a34a' : 'rgba(22,163,74,0.45)'} />
               ))}

@@ -33,8 +33,6 @@ export default function Strategy() {
   const [legs, setLegs] = useState<Leg[]>([])
   const [analysis, setAnalysis] = useState<any>(null)
   const [analysing, setAnalysing] = useState(false)
-  const [ivShift, setIvShift] = useState(0)         // ±50%
-  const [dteOverride, setDteOverride] = useState<number | null>(null)
   const [saveName, setSaveName] = useState('')
   const [saveView, setSaveView] = useState('NEUTRAL')
   const [showSend, setShowSend] = useState(false)
@@ -73,10 +71,10 @@ export default function Strategy() {
       try {
         const r = await api.post('/api/strategy/analyse', {
           underlying,
-          legs: legs.map(({ lot_size, strike, option_type, ...rest }) => rest),
+          // Keep strike + option_type so the backend doesn't have to rely on
+          // the symbol regex; it can mis-parse weekly Fyers symbols.
+          legs: legs.map(({ lot_size, ...rest }) => rest),
           range_pct: 0.12, strikecount,
-          iv_shift_pct: ivShift,
-          dte_override_days: dteOverride,
         })
         setAnalysis(r.data)
       } catch (e: any) {
@@ -84,7 +82,7 @@ export default function Strategy() {
       } finally { setAnalysing(false) }
     }, 350)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(legs), underlying, strikecount, ivShift, dteOverride])
+  }, [JSON.stringify(legs), underlying, strikecount])
 
   const addLeg = (row: any, side: 'ce' | 'pe', action: 'BUY' | 'SELL') => {
     const leg = row[side]; if (!leg?.symbol) return
@@ -153,7 +151,7 @@ export default function Strategy() {
     <div>
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="row" style={{ alignItems: 'baseline', gap: 10 }}>
-          <h3 style={{ margin: 0 }}>Strategy Builder</h3>
+          <h3 style={{ margin: 0 }}>Configure</h3>
           {legs.length > 0 && (
             <span className="tag" style={{ background: 'rgba(96,165,250,.15)', color: 'var(--accent)' }}>{strategyName}</span>
           )}
@@ -201,10 +199,13 @@ export default function Strategy() {
       )}
 
       <div className="row">
-        <div className="card col" style={{ flex: 1, maxHeight: 560, overflow: 'auto' }}>
+        <div className="card col" style={{ flex: 1, minWidth: 360 }}>
           <h3>Strikes — click B/S to add</h3>
-          <table>
-            <thead><tr><th colSpan={2}>CE</th><th>LTP</th><th style={{ textAlign: 'center' }}>Strike</th><th>LTP</th><th colSpan={2}>PE</th></tr></thead>
+          <div style={{ maxHeight: 520, overflow: 'auto' }}>
+            <table style={{ fontSize: 11, width: '100%' }}>
+              <thead style={{ position: 'sticky', top: 0, background: 'var(--panel)', zIndex: 1 }}>
+                <tr><th colSpan={2}>CE</th><th style={{ textAlign: 'right' }}>LTP</th><th style={{ textAlign: 'center' }}>Strike</th><th style={{ textAlign: 'right' }}>LTP</th><th colSpan={2}>PE</th></tr>
+              </thead>
             <tbody>
               {strikeRows.map(s => {
                 const selectedRow = selectedStrikes.includes(s.strike)
@@ -221,7 +222,8 @@ export default function Strategy() {
                 })
               }
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
 
         <div className="col" style={{ flex: 2 }}>
@@ -308,36 +310,32 @@ export default function Strategy() {
               </div>
 
               <div className="card" style={{ marginTop: 12 }}>
-                <h3>What-if scenarios</h3>
-                <div className="row" style={{ alignItems: 'center' }}>
-                  <label style={{ fontSize: 11, minWidth: 80 }}>IV shift {ivShift > 0 ? '+' : ''}{ivShift}%</label>
-                  <input type="range" min={-50} max={50} step={5} value={ivShift} onChange={e => setIvShift(+e.target.value)} style={{ flex: 1 }} />
-                  <button onClick={() => setIvShift(0)}>Reset</button>
-                </div>
-                <div className="row" style={{ alignItems: 'center', marginTop: 6 }}>
-                  <label style={{ fontSize: 11, minWidth: 80 }}>DTE {dteOverride ?? Math.round(analysis.dte_days)}d</label>
-                  <input type="range" min={0} max={45} step={1} value={dteOverride ?? Math.round(analysis.dte_days)} onChange={e => setDteOverride(+e.target.value)} style={{ flex: 1 }} />
-                  <button onClick={() => setDteOverride(null)}>Reset</button>
-                </div>
-
-                <table style={{ marginTop: 10 }}>
-                  <thead><tr><th>Move</th><th>Spot</th><th>P&amp;L @ expiry</th></tr></thead>
-                  <tbody>
-                    {analysis.scenarios?.map((s: any) => (
-                      <tr key={s.move_pct}>
-                        <td className={s.move_pct > 0 ? 'bull' : s.move_pct < 0 ? 'bear' : ''}>{s.move_pct > 0 ? '+' : ''}{s.move_pct}%</td>
-                        <td>{num(s.spot, 0)}</td>
-                        <td className={s.pnl >= 0 ? 'bull' : 'bear'}>₹ {num(s.pnl, 0)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="card" style={{ marginTop: 12 }}>
                 <h3>Payoff @ expiry</h3>
                 <PayoffChart payoff={analysis.payoff} />
               </div>
+
+              {analysis.scenarios?.length > 0 && (
+                <div className="card" style={{ marginTop: 12 }}>
+                  <div className="card-header">
+                    <h3>What-if scenarios</h3>
+                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                      P&amp;L at expiry across spot moves
+                    </span>
+                  </div>
+                  <table>
+                    <thead><tr><th>Move</th><th>Spot</th><th>P&amp;L @ expiry</th></tr></thead>
+                    <tbody>
+                      {analysis.scenarios.map((s: any) => (
+                        <tr key={s.move_pct}>
+                          <td className={s.move_pct > 0 ? 'bull' : s.move_pct < 0 ? 'bear' : ''}>{s.move_pct > 0 ? '+' : ''}{s.move_pct}%</td>
+                          <td>{num(s.spot, 0)}</td>
+                          <td className={s.pnl >= 0 ? 'bull' : 'bear'}>₹ {num(s.pnl, 0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </>
           )}
         </div>
