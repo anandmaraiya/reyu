@@ -13,6 +13,7 @@ import GreeksHeatmap from '../components/GreeksHeatmap'
 import KeyLevelsStrip from '../components/KeyLevelsStrip'
 import RecommendationPanel from '../components/RecommendationPanel'
 import FilterBar from '../components/FilterBar'
+import OITimeSeries from '../components/OITimeSeries'
 import { LoadingSkeleton } from '../components/LoadingStates'
 import { useToast } from '../toast'
 import { downloadCSV } from '../utils/csv'
@@ -68,6 +69,9 @@ export default function Dashboard() {
   const [input, setInput] = useState(symbol)
   const [strikes, setStrikes] = useState(25)
   const [expiry, setExpiry] = useState('')
+  const [oiWindow, setOiWindow] = useState(15)
+  const [oiSeriesInterval, setOiSeriesInterval] = useState<'5m' | '15m'>('5m')
+  const [oiSeriesMinutes, setOiSeriesMinutes] = useState(240)
   const [order, setOrder] = useState<{ symbol: string; side: 'BUY' | 'SELL'; price?: number } | null>(null)
   const [searchHistory, setSearchHistory] = useState<string[]>([])
   const [selectedStrikes, setSelectedStrikes] = useState<number[]>([])
@@ -77,32 +81,6 @@ export default function Dashboard() {
     queryFn: async () => (await api.get('/api/options/chain', { params: { symbol, strikecount: strikes, expiry } })).data,
     refetchInterval: 15000,
   })
-
-  function OptionChainTableTradable({ chain, onTrade, onStrategyBuild }: { chain: Chain; onTrade: (s: string, side: 'BUY' | 'SELL', p?: number) => void; onStrategyBuild: (selected: number[]) => void }) {
-  
-
-  return (
-    <div>
-      <OptionChainTable chain={chain} onSelectionChange={setSelectedStrikes} onStrategyBuild={onStrategyBuild} />
-      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--muted)' }}>
-        Quick trade ATM:
-        {(() => {
-          const atm = chain.strikes.find(s => s.strike === chain.summary.atm_strike)
-          if (!atm) return ' —'
-          return (
-            <span style={{ marginLeft: 8 }}>
-              {atm.ce && <button className="primary" style={{ marginRight: 6, background: 'var(--green)', borderColor: 'var(--green)', color: '#fff' }}
-                      onClick={() => onTrade(atm.ce!.symbol!, 'BUY', atm.ce!.ltp)}>BUY CE @ {atm.ce.ltp}</button>}
-              {atm.pe && <button className="primary" style={{ background: 'var(--red)', borderColor: 'var(--red)', color: '#fff' }}
-                      onClick={() => onTrade(atm.pe!.symbol!, 'BUY', atm.pe!.ltp)}>BUY PE @ {atm.pe.ltp}</button>}
-            </span>
-          )
-        })()}
-      </div>
-    </div>
-  )
-}
-
 
   const currentSymbol = useMemo(() => SYMBOL_GROUPS.find(item => item.value === symbol) ?? SYMBOL_GROUPS[0], [symbol])
   const symbolSuggestions = useMemo(() => {
@@ -138,6 +116,10 @@ export default function Dashboard() {
     await api.post('/api/ts/track', null, { params: { symbol, tracked: true } })
     t.push('success', `Tracking ${symbol} — snapshots will start within ~60s.`)
   }
+
+  const expiryOptions = data?.expiries ?? []
+  const expiryLabel = expiryOptions.find(e => String(e.expiry) === expiry)?.date || (expiry ? expiry : 'Current')
+
   const exportChain = () => {
     if (!data) return
     downloadCSV(`${symbol}-chain.csv`, data.strikes.map(s => ({
@@ -196,6 +178,27 @@ export default function Dashboard() {
                 <div className="stat-meta">Visible strikes</div>
               </div>
             </div>
+            <div className="row" style={{ gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>Expiry</span>
+                <select value={expiry} onChange={e => setExpiry(e.target.value)} style={{ minWidth: 160 }}>
+                  <option value="">Current</option>
+                  {expiryOptions.map(exp => (
+                    <option key={exp.expiry} value={exp.expiry}>{exp.date}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>Strike window</span>
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                  {[5, 15, 25, 40].map(size => (
+                    <button key={size} className={oiWindow === size ? 'primary' : 'ghost'} onClick={() => setOiWindow(size)} style={{ padding: '6px 10px', fontSize: 11 }}>
+                      {size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         {data ? (
@@ -235,7 +238,7 @@ export default function Dashboard() {
                 onStrategyBuild={(selected) => {
                   setSelectedStrikes(selected)
                   if (selected.length > 0) {
-                    navigate(`/strategy?underlying=${encodeURIComponent(symbol)}&selected=${selected.join(',')}`)
+                    navigate(`/strategy?underlying=${encodeURIComponent(symbol)}&selected=${selected.join(',')}${expiry ? `&expiry=${encodeURIComponent(expiry)}` : ''}`)
                   }
                 }}
               />
@@ -246,8 +249,25 @@ export default function Dashboard() {
         </div>
 
         <div className="col" style={{ flex: 1, minWidth: 320 }}>
-          <div className="card"><div className="card-header"><h3>OI Distribution</h3></div><OIChart chain={data} /></div>
+          <div className="card"><div className="card-header"><h3>OI Distribution</h3></div><OIChart chain={data} windowSize={oiWindow} /></div>
           <div style={{ height: 12 }} />
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+              <h3 style={{ margin: 0 }}>OI Build-up</h3>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <select value={oiSeriesInterval} onChange={e => setOiSeriesInterval(e.target.value as '5m' | '15m')}>
+                  <option value="5m">5m</option>
+                  <option value="15m">15m</option>
+                </select>
+                <select value={oiSeriesMinutes} onChange={e => setOiSeriesMinutes(+e.target.value)}>
+                  <option value={120}>2h</option>
+                  <option value={240}>4h</option>
+                  <option value={480}>8h</option>
+                </select>
+              </div>
+            </div>
+            <OITimeSeries symbol={symbol} interval={oiSeriesInterval} minutes={oiSeriesMinutes} />
+          </div>
           <HedgeBuilder underlying={symbol} chain={data} />
         </div>
       </div>

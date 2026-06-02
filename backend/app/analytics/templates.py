@@ -32,7 +32,7 @@ def _find(rows, k):
     return next((r for r in rows if r["strike"] == k), None)
 
 
-def bull_call_spread(chain, lots=1, width_steps=2):
+def bull_call_spread(chain, lots=1, width_steps=2, **_):
     rows, atm, spacing = _strikes_around_atm(chain)
     if not rows: return []
     buy = _find(rows, atm)
@@ -40,7 +40,7 @@ def bull_call_spread(chain, lots=1, width_steps=2):
     return [l for l in [_leg(buy, "ce", "BUY", lots), _leg(sell, "ce", "SELL", lots)] if l]
 
 
-def bear_put_spread(chain, lots=1, width_steps=2):
+def bear_put_spread(chain, lots=1, width_steps=2, **_):
     rows, atm, spacing = _strikes_around_atm(chain)
     if not rows: return []
     buy = _find(rows, atm)
@@ -60,14 +60,14 @@ def short_straddle(chain, lots=1, **_):
     return [l for l in [_leg(r, "ce", "SELL", lots), _leg(r, "pe", "SELL", lots)] if l]
 
 
-def long_strangle(chain, lots=1, width_steps=2):
+def long_strangle(chain, lots=1, width_steps=2, **_):
     rows, atm, sp = _strikes_around_atm(chain)
     rc = _find(rows, atm + width_steps * sp)
     rp = _find(rows, atm - width_steps * sp)
     return [l for l in [_leg(rc, "ce", "BUY", lots), _leg(rp, "pe", "BUY", lots)] if l]
 
 
-def iron_condor(chain, lots=1, width_steps=2, wing_steps=2):
+def iron_condor(chain, lots=1, width_steps=2, wing_steps=2, **_):
     rows, atm, sp = _strikes_around_atm(chain)
     legs = []
     # Short inner CE + Long outer CE
@@ -83,7 +83,7 @@ def iron_condor(chain, lots=1, width_steps=2, wing_steps=2):
     return legs
 
 
-def iron_butterfly(chain, lots=1, wing_steps=2):
+def iron_butterfly(chain, lots=1, wing_steps=2, **_):
     rows, atm, sp = _strikes_around_atm(chain)
     r_atm = _find(rows, atm)
     r_lc = _find(rows, atm + wing_steps * sp)
@@ -96,7 +96,7 @@ def iron_butterfly(chain, lots=1, wing_steps=2):
     return legs
 
 
-def call_butterfly(chain, lots=1, wing_steps=2):
+def call_butterfly(chain, lots=1, wing_steps=2, **_):
     rows, atm, sp = _strikes_around_atm(chain)
     lower = _find(rows, atm - wing_steps * sp)
     body = _find(rows, atm)

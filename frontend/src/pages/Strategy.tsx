@@ -27,6 +27,7 @@ const lotFor = (sym: string): number => {
 export default function Strategy() {
   const t = useToast()
   const [underlying, setUnderlying] = useState('NSE:NIFTY50-INDEX')
+  const [expiry, setExpiry] = useState('')
   const [strikecount, setStrikecount] = useState(25)
   const [legs, setLegs] = useState<Leg[]>([])
   const [analysis, setAnalysis] = useState<any>(null)
@@ -46,11 +47,13 @@ export default function Strategy() {
   useEffect(() => {
     const underlyingParam = searchParams.get('underlying')
     if (underlyingParam) setUnderlying(underlyingParam)
+    const expiryParam = searchParams.get('expiry')
+    if (expiryParam) setExpiry(expiryParam)
   }, [searchParams])
 
   const { data: chain } = useQuery<Chain>({
-    queryKey: ['chain', underlying, strikecount],
-    queryFn: async () => (await api.get('/api/options/chain', { params: { symbol: underlying, strikecount } })).data,
+    queryKey: ['chain', underlying, strikecount, expiry],
+    queryFn: async () => (await api.get('/api/options/chain', { params: { symbol: underlying, strikecount, expiry } })).data,
     refetchInterval: 30000,
   })
   const { data: tpls } = useQuery<Template[]>({
@@ -151,6 +154,13 @@ export default function Strategy() {
           <label style={{ fontSize: 12, color: 'var(--muted)' }}>Underlying</label>
           <select value={underlying} onChange={e => { setUnderlying(e.target.value); setLegs([]); setAnalysis(null) }}>
             {PRESETS.map(p => <option key={p}>{p}</option>)}
+          </select>
+          <label style={{ fontSize: 12, color: 'var(--muted)' }}>Expiry</label>
+          <select value={expiry} onChange={e => { setExpiry(e.target.value); setLegs([]); setAnalysis(null) }}>
+            <option value="">Default</option>
+            {chain?.expiries?.map(exp => (
+              <option key={exp.expiry} value={exp.expiry}>{exp.date}</option>
+            ))}
           </select>
           <label style={{ fontSize: 12, color: 'var(--muted)' }}>Strikes</label>
           <select value={strikecount} onChange={e => setStrikecount(+e.target.value)}>
