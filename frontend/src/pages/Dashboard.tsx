@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, Chain } from '../api'
@@ -17,10 +17,10 @@ import OIBuildup from '../components/OIBuildup'
 import StrikeDetailPanel from '../components/StrikeDetailPanel'
 import { LoadingSkeleton } from '../components/LoadingStates'
 import { useToast } from '../toast'
+import { useLiveTicks } from '../hooks/useLiveTicks'
 import { downloadCSV } from '../utils/csv'
 
 // Twelve quick-tickers — the indices first, then top-volume stock derivatives.
-// Order matters: this is what the user sees in the pill row, left to right.
 const SYMBOL_GROUPS = [
   { label: 'NIFTY',      value: 'NSE:NIFTY50-INDEX' },
   { label: 'BANKNIFTY',  value: 'NSE:NIFTYBANK-INDEX' },
@@ -36,8 +36,6 @@ const SYMBOL_GROUPS = [
   { label: 'TATAMOTORS', value: 'NSE:TATAMOTORS-EQ' },
 ]
 
-// Tracked F&O universe — fetched once from /api/ts/instruments and used as
-// the autocomplete pool. Falls back to SYMBOL_GROUPS if the API is offline.
 const FALLBACK_SYMBOLS = SYMBOL_GROUPS.map(g => g.value)
 
 type OptionChainTableTradableProps = {
@@ -85,12 +83,36 @@ export default function Dashboard() {
   const [searchHistory, setSearchHistory] = useState<string[]>([])
   const [selectedStrikes, setSelectedStrikes] = useState<number[]>([])
   const [hoverStrike, setHoverStrike] = useState<number | null>(null)
+  const [liveLTP, setLiveLTP] = useState<number | null>(null)
+  const [liveChain, setLiveChain] = useState<Record<string, any> | null>(null)
+  const liveLTPRef = useRef<number | null>(null)
 
   const { data, isFetching, error, refetch } = useQuery<Chain>({
     queryKey: ['chain', symbol, strikes, expiry],
     queryFn: async () => (await api.get('/api/options/chain', { params: { symbol, strikecount: strikes, expiry } })).data,
-    refetchInterval: 15000,
+    refetchInterval: 30000,
   })
+
+  // WebSocket live ticks for the active symbol
+  const { status: wsStatus, ticks, chains } = useLiveTicks(symbol ? [symbol] : [])
+
+  // Overlay live ticker price onto chain data
+  useEffect(() => {
+    if (ticks[symbol]?.close != null) {
+      const newLtp = ticks[symbol].close
+      if (newLtp !== liveLTPRef.current) {
+        liveLTPRef.current = newLtp
+        setLiveLTP(newLtp)
+      }
+    }
+  }, [ticks, symbol])
+
+  // Overlay live chain snapshot (PCR, bias, etc.)
+  useEffect(() => {
+    if (chains[symbol]) {
+      setLiveChain(chains[symbol])
+    }
+  }, [chains, symbol])
 
   const currentSymbol = useMemo(() => SYMBOL_GROUPS.find(item => item.value === symbol) ?? SYMBOL_GROUPS[0], [symbol])
 
@@ -109,9 +131,6 @@ export default function Dashboard() {
     const query = input.trim().toUpperCase()
     const pillValues = new Set(SYMBOL_GROUPS.map(g => g.value))
     if (!query) {
-      // Empty search → only recent history items that AREN'T already in the
-      // pill row above (no point showing NIFTY twice) and aren't the current
-      // active symbol.
       return searchHistory.filter(s => s !== symbol && !pillValues.has(s)).slice(0, 6)
     }
     const matches = symbolPool.filter(s => s.toUpperCase().includes(query) && s !== symbol)
@@ -126,11 +145,7 @@ export default function Dashboard() {
   useEffect(() => {
     const saved = localStorage.getItem('dashboard_search_history')
     if (saved) {
-      try {
-        setSearchHistory(JSON.parse(saved))
-      } catch {
-        setSearchHistory([])
-      }
+      try { setSearchHistory(JSON.parse(saved)) } catch { setSearchHistory([]) }
     }
   }, [])
 
@@ -151,6 +166,21 @@ export default function Dashboard() {
 
   const expiryOptions = data?.expiries ?? []
   const expiryLabel = expiryOptions.find(e => String(e.expiry) === expiry)?.date || (expiry ? expiry : 'Current')
+
+  // Effective data: live WebSocket overlays over REST poll
+  const effectiveLTP = liveLTP ?? data?.ltp
+  const effectiveSummary = liveChain?.summary ?? data?.summary
+  const effectiveBias = liveChain?.bias ?? data?.bias
+
+  const liveChainData = useMemo(() => {
+    if (!data) return undefined
+    return {
+      ...data,
+      ltp: effectiveLTP ?? data.ltp,
+      summary: effectiveSummary ?? data.summary,
+      bias: effectiveBias ?? data.bias,
+    } as Chain
+  }, [data, effectiveLTP, effectiveSummary, effectiveBias])
 
   const exportChain = () => {
     if (!data) return
@@ -173,18 +203,10 @@ export default function Dashboard() {
           filters={SYMBOL_GROUPS.map(item => ({
             label: item.label,
             active: item.value === symbol,
-            onClick: () => {
-              setSymbol(item.value)
-              setInput(item.value)
-              saveSearchHistory(item.value)
-            },
+            onClick: () => { setSymbol(item.value); setInput(item.value); saveSearchHistory(item.value) },
           }))}
           suggestions={symbolSuggestions}
-          onSuggestionClick={value => {
-            setSymbol(value)
-            setInput(value)
-            saveSearchHistory(value)
-          }}
+          onSuggestionClick={value => { setSymbol(value); setInput(value); saveSearchHistory(value) }}
           rightContent={(
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button className="primary" onClick={() => { setSymbol(input); saveSearchHistory(input) }}>Load</button>
@@ -233,13 +255,13 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-        {data ? (
+        {liveChainData ? (
           <>
             <div className="col">
-              <RecommendationPanel chain={data} onApply={() => navigate(`/strategy?underlying=${encodeURIComponent(symbol)}`)} />
+              <RecommendationPanel chain={liveChainData} onApply={() => navigate(`/strategy?underlying=${encodeURIComponent(symbol)}`)} />
             </div>
             <div className="col">
-              <KeyLevelsStrip chain={data} />
+              <KeyLevelsStrip chain={liveChainData} />
             </div>
           </>
         ) : (
@@ -248,26 +270,26 @@ export default function Dashboard() {
       </div>
 
       {/* KPI strip — full width, prominent */}
-      {data && <SummaryStrip chain={data} />}
+      {liveChainData && <SummaryStrip chain={liveChainData} />}
 
       {/* Analytical charts — two equal-weight cards */}
-      {data && (
+      {liveChainData && (
         <div className="grid-2">
-          <div className="col"><IVSmile chain={data} /></div>
+          <div className="col"><IVSmile chain={liveChainData} /></div>
           <div className="col">
             <div className="card">
               <div className="card-header"><h3>OI Distribution</h3></div>
-              <OIChart chain={data} windowSize={oiWindow} />
+              <OIChart chain={liveChainData} windowSize={oiWindow} />
             </div>
           </div>
         </div>
       )}
 
-      {/* OI Build-up — full-width when the Hedge Builder lives at the bottom */}
-      {data && (
+      {/* OI Build-up */}
+      {liveChainData && (
         <div className="card">
           <div className="card-header"><h3>OI Build-up (ATM ± 4)</h3></div>
-          <OIBuildup chain={data} window={4} />
+          <OIBuildup chain={liveChainData} window={4} />
         </div>
       )}
 
@@ -279,9 +301,9 @@ export default function Dashboard() {
               <h3>Strike Ladder</h3>
               <span style={{ fontSize: 11, color: 'var(--muted)' }}>hover a row for context · click ATM CE/PE to trade</span>
             </div>
-            {data ? (
+            {liveChainData ? (
               <OptionChainTableTradable
-                chain={data}
+                chain={liveChainData}
                 onTrade={(sym, side, price) => setOrder({ symbol: sym, side, price })}
                 onSelectionChange={setSelectedStrikes}
                 onHoverStrike={setHoverStrike}
@@ -299,11 +321,11 @@ export default function Dashboard() {
         </div>
 
         <aside className="col sticky-rail">
-          {data ? <StrikeDetailPanel chain={data} strike={hoverStrike} /> : <LoadingSkeleton />}
+          {liveChainData ? <StrikeDetailPanel chain={liveChainData} strike={hoverStrike} /> : <LoadingSkeleton />}
         </aside>
       </div>
 
-      {/* Intraday time-series — today's session, switchable to a specific option leg */}
+      {/* Intraday time-series */}
       <div className="card">
         <div className="card-header">
           <h3>Intraday Time-Series — today's session (09:15 IST → now)</h3>
@@ -316,10 +338,10 @@ export default function Dashboard() {
         <OITimeSeries symbol={symbol} chain={data} interval={oiSeriesInterval} />
       </div>
 
-      {/* Hedge Builder — anchored at bottom */}
-      {data && <HedgeBuilder underlying={symbol} chain={data} />}
+      {/* Hedge Builder */}
+      {liveChainData && <HedgeBuilder underlying={symbol} chain={liveChainData} />}
 
-      {!data && isFetching && <LoadingSkeleton />}
+      {!liveChainData && isFetching && <LoadingSkeleton />}
 
       {order && (
         <OrderModal symbol={order.symbol} side={order.side} defaultPrice={order.price}
@@ -328,4 +350,3 @@ export default function Dashboard() {
     </div>
   )
 }
-

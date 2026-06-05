@@ -7,6 +7,8 @@ import Watchlists from './pages/Watchlists'
 import Portfolios from './pages/Portfolios'
 import Scalping from './pages/Scalping'
 import Strategy from './pages/Strategy'
+import Chat from './pages/Chat'
+import Backtest from './pages/Backtest'
 import Positions from './pages/Positions'
 import Login from './pages/Login'
 import Saved from './pages/Saved'
@@ -28,6 +30,8 @@ const NAV: NavGroup[] = [
   { group: 'Trade', items: [
     { to: '/dashboard', label: 'Option Chain', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 17h4V7H4z"/><path d="M10 17h4V4h-4z"/><path d="M16 17h4V11h-4z"/></svg> },
     { to: '/strategy', label: 'Strategy Builder', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M11 18h6"/></svg> },
+    { to: '/chat', label: 'AI Co-pilot', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg> },
+    { to: '/backtest', label: 'Backtest', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-6 4 4 6-9"/></svg> },
     { to: '/compare', label: 'Compare Strategies', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h6v12H4z"/><path d="M14 9h6v9h-6z"/></svg> },
     { to: '/positions', label: 'Positions', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19h16"/><path d="M7 15l3-3 2 2 5-5"/><path d="M8 11V7h8v2"/></svg> },
     { to: '/scalping', label: 'Scalping', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg> },
@@ -57,6 +61,8 @@ function StatusDot({ ok, label }: { ok: boolean; label: string }) {
 const PAGE_TITLE_MAP: Record<string, string> = {
   '/dashboard': 'Option Chain',
   '/strategy': 'Strategy Builder',
+  '/chat': 'AI Co-pilot',
+  '/backtest': 'Backtest',
   '/compare': 'Compare Strategies',
   '/positions': 'Positions',
   '/watchlists': 'Watchlists',
@@ -72,6 +78,9 @@ const PAGE_TITLE_MAP: Record<string, string> = {
 export default function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('theme') as any) || 'dark')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [user, setUser] = useState<{ id: string; email: string; display_name: string; tier: string } | null>(() => {
+    try { return JSON.parse(localStorage.getItem('user') || 'null') } catch { return null }
+  })
   const location = useLocation()
 
   useEffect(() => {
@@ -91,12 +100,19 @@ export default function App() {
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
   const toggleSidebar = () => setSidebarCollapsed(v => !v)
 
+  const logout = () => {
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    localStorage.removeItem('user')
+    setUser(null)
+  }
+
   return (
     <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <aside className="sidebar">
         <div className="sidebar-header">
           <div>
-            <div className="sidebar-logo">Reyu</div>
+            <div className="sidebar-logo">Reyu.ai</div>
             <div className="sidebar-tag">Premium</div>
           </div>
           <button type="button" className="sidebar-collapse-btn" onClick={toggleSidebar} aria-label="Toggle sidebar">
@@ -122,12 +138,17 @@ export default function App() {
 
         <div className="sidebar-footer">
           <div className="profile-card">
-            <div className="profile-avatar">R</div>
+            <div className="profile-avatar">{user ? user.display_name.charAt(0).toUpperCase() : 'R'}</div>
             <div>
-              <div className="profile-name">Reyu Trader</div>
-              <div className="profile-meta">Pro Tier</div>
+              <div className="profile-name">{user ? user.display_name : 'Reyu Trader'}</div>
+              <div className="profile-meta">{user ? `${user.tier.charAt(0).toUpperCase()}${user.tier.slice(1)} Tier` : 'Pro Tier'}</div>
             </div>
           </div>
+          {user && (
+            <button className="ghost" onClick={logout} style={{ width: '100%', padding: 6, fontSize: 11, marginBottom: 6 }}>
+              Sign Out
+            </button>
+          )}
           <div className="sidebar-status-bar">
             <StatusDot ok={!!status?.fyers} label={status?.fyers ? 'Fyers live' : 'Demo mode'} />
             <StatusDot ok={!!status?.redis} label="Redis" />
@@ -184,6 +205,8 @@ export default function App() {
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/strategy" element={<Strategy />} />
+                <Route path="/chat" element={<Chat />} />
+                <Route path="/backtest" element={<Backtest />} />
                 <Route path="/compare" element={<Compare />} />
                 <Route path="/positions" element={<Positions />} />
                 <Route path="/watchlists" element={<Watchlists />} />

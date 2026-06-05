@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Chain } from '../api'
 
 const num = (n: any, d = 2) => n == null ? '—' : Number(n).toLocaleString(undefined, { maximumFractionDigits: d })
@@ -54,13 +54,23 @@ export default function OptionChainTable({
   const ivValues = useMemo(() => chain.strikes.flatMap(r => [r.ce?.iv, r.pe?.iv].filter((v): v is number => v != null)), [chain.strikes])
 
   const rows = useMemo(() => {
-    const filtered = chain.strikes.filter(r => {
-      if (filter === 'ALL') return true
-      if (filter === 'ATM') return Math.abs(r.strike - atm) <= atm * 0.005
-      if (filter === 'ITM') return r.strike < chain.ltp || r.strike > chain.ltp
-      if (filter === 'OTM') return Math.abs(r.strike - chain.ltp) > atm * 0.005
-      return true
-    })
+    // Sort by strike first so we can do positional filtering for ATM
+    const byStrike = [...chain.strikes].sort((a, b) => a.strike - b.strike)
+    const atmIdx = byStrike.findIndex(r => r.strike === atm)
+
+    let filtered = byStrike
+    if (filter === 'ATM') {
+      // ATM = ATM strike ± 5 (always at least 5 strikes above and 5 below)
+      const start = Math.max(0, atmIdx - 5)
+      const end = Math.min(byStrike.length, atmIdx + 6)
+      filtered = byStrike.slice(start, end)
+    } else if (filter === 'ITM') {
+      filtered = byStrike.filter(r => r.strike < chain.ltp)
+    } else if (filter === 'OTM') {
+      filtered = byStrike.filter(r => r.strike > chain.ltp)
+    }
+    // ALL → no filter
+
     return [...filtered].sort((a, b) => {
       const aVal = sortFields[sortBy].get(a)
       const bVal = sortFields[sortBy].get(b)
@@ -81,6 +91,16 @@ export default function OptionChainTable({
   useEffect(() => {
     onSelectionChange?.(selected)
   }, [selected, onSelectionChange])
+
+  // Centre the ATM row in the scroll container on load / when ATM changes
+  const atmRowRef = useRef<HTMLTableRowElement>(null)
+  useEffect(() => {
+    if (!atmRowRef.current) return
+    const id = window.setTimeout(() => {
+      atmRowRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' })
+    }, 50)
+    return () => clearTimeout(id)
+  }, [atm, filter])
 
   const sortByKey = (key: SortKey) => {
     if (sortBy === key) setSortDir(dir => dir === 'asc' ? 'desc' : 'asc')
@@ -120,15 +140,15 @@ export default function OptionChainTable({
               <th className="check-column"><input type="checkbox" checked={selectAll} onChange={toggleSelectAll} aria-label="Select all strikes" /></th>
               <th className="sortable" onClick={() => sortByKey('ce_oi')}>CE OI {sortBy === 'ce_oi' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</th>
               <th>CE ΔOI</th>
-              <th className="sortable" onClick={() => sortByKey('ce_iv')}>CE IV {sortBy === 'ce_iv' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</th>
-              <th>CE Δ</th>
-              <th>CE θ</th>
+              {/* <th className="sortable" onClick={() => sortByKey('ce_iv')}>CE IV {sortBy === 'ce_iv' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</th> */}
+              {/* <th>CE Δ</th> */}
+              {/* <th>CE θ</th> */}
               <th>CE LTP</th>
               <th className="sortable" onClick={() => sortByKey('strike')}>Strike {sortBy === 'strike' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</th>
               <th>PE LTP</th>
-              <th>PE θ</th>
-              <th>PE Δ</th>
-              <th className="sortable" onClick={() => sortByKey('pe_iv')}>PE IV {sortBy === 'pe_iv' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</th>
+              {/* <th>PE θ</th> */}
+              {/* <th>PE Δ</th> */}
+              {/* <th className="sortable" onClick={() => sortByKey('pe_iv')}>PE IV {sortBy === 'pe_iv' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</th> */}
               <th>PE ΔOI</th>
               <th className="sortable" onClick={() => sortByKey('pe_oi')}>PE OI {sortBy === 'pe_oi' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</th>
             </tr>
@@ -140,21 +160,22 @@ export default function OptionChainTable({
               const selectedRow = selected.includes(r.strike)
               return (
                 <tr key={r.strike}
+                    ref={r.strike === atm ? atmRowRef : undefined}
                     className={`${r.strike === atm ? 'atm' : ''} ${selectedRow ? 'selected-row' : ''}`}
                     onMouseEnter={() => onHoverStrike?.(r.strike)}
                     onMouseLeave={() => onHoverStrike?.(null)}>
                   <td className="check-column"><input type="checkbox" checked={selectedRow} onChange={() => toggleSelect(r.strike)} aria-label={`Select strike ${r.strike}`} /></td>
                   <td style={{ background: heat(ce.oi, maxOI, 'ce') }}>{num(ce.oi, 0)}</td>
                   <td className={ce.oi_change > 0 ? 'bull' : ce.oi_change < 0 ? 'bear' : ''}>{num(ce.oi_change, 0)}</td>
-                  <td className={ivClass(ce.iv)}>{ce.iv ? (ce.iv * 100).toFixed(1) : '—'}</td>
-                  <td>{num(ce.delta, 3)}</td>
-                  <td>{num(ce.theta, 2)}</td>
+                  {/* <td className={ivClass(ce.iv)}>{ce.iv ? (ce.iv * 100).toFixed(1) : '—'}</td> */}
+                  {/* <td>{num(ce.delta, 3)}</td> */}
+                  {/* <td>{num(ce.theta, 2)}</td> */}
                   <td>{num(ce.ltp)}</td>
                   <td style={{ textAlign: 'center', fontWeight: 600 }}>{r.strike}</td>
                   <td>{num(pe.ltp)}</td>
-                  <td>{num(pe.theta, 2)}</td>
-                  <td>{num(pe.delta, 3)}</td>
-                  <td className={ivClass(pe.iv)}>{pe.iv ? (pe.iv * 100).toFixed(1) : '—'}</td>
+                  {/* <td>{num(pe.theta, 2)}</td> */}
+                  {/* <td>{num(pe.delta, 3)}</td> */}
+                  {/* <td className={ivClass(pe.iv)}>{pe.iv ? (pe.iv * 100).toFixed(1) : '—'}</td> */}
                   <td className={pe.oi_change > 0 ? 'bull' : pe.oi_change < 0 ? 'bear' : ''}>{num(pe.oi_change, 0)}</td>
                   <td style={{ background: heat(pe.oi, maxOI, 'pe') }}>{num(pe.oi, 0)}</td>
                 </tr>

@@ -28,6 +28,11 @@ def _session() -> fyersModel.SessionModel:
 @router.get("/login")
 async def login():
     url = _session().generate_authcode()
+    # The Fyers SDK appends `state=None` (Python literal) when no state was
+    # provided — strip it before handing the URL to the browser so the OAuth
+    # round-trip stays clean.
+    if url and "state=None" in url:
+        url = url.replace("&state=None", "").replace("?state=None&", "?").replace("?state=None", "")
     return {"login_url": url}
 
 

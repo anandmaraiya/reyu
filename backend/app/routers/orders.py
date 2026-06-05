@@ -17,7 +17,8 @@ Validation we enforce locally before hitting Fyers:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from app.routers.user_auth import require_auth as _require_live_tier
 from pydantic import BaseModel, Field
 from typing import Literal
 
@@ -134,7 +135,10 @@ async def preview(symbol: str, qty: int | None = None):
 
 
 @router.post("")
-async def place(req: OrderRequest):
+async def place(req: OrderRequest, user: dict = Depends(_require_live_tier)):
+    # Free tier can still validate (dry-run), but live orders require a paid plan.
+    if not req.dry_run and user.get("tier") == "free":
+        raise HTTPException(403, "Live order placement requires the Pro or Algo plan. Upgrade in Settings → Subscription.")
     info = await resolve(req.symbol)
     _validate(req, info)
 
@@ -190,7 +194,9 @@ class BatchOrderRequest(BaseModel):
 
 
 @router.post("/batch")
-async def place_batch(req: BatchOrderRequest):
+async def place_batch(req: BatchOrderRequest, user: dict = Depends(_require_live_tier)):
+    if not req.dry_run and user.get("tier") == "free":
+        raise HTTPException(403, "Live batch orders require the Pro or Algo plan.")
     """Place a multi-leg strategy. Each leg is validated independently. If any
     leg fails validation we return all errors and place nothing (dry-run-like)."""
     results = []
@@ -251,7 +257,9 @@ def _reverse_action(net_qty: int) -> tuple[str, int]:
 
 
 @router.post("/exit")
-async def exit_positions(req: ExitRequest):
+async def exit_positions(req: ExitRequest, user: dict = Depends(_require_live_tier)):
+    if not req.dry_run and user.get("tier") == "free":
+        raise HTTPException(403, "Live exits require the Pro or Algo plan.")
     """Builds market orders to flatten matching open positions.
 
     Filter precedence:

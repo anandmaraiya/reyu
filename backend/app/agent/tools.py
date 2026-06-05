@@ -1,0 +1,230 @@
+"""Agent tool registry.
+
+Each tool wraps an existing analytics function and exposes:
+  - name  : stable identifier
+  - description : one-line summary (also fed to LLMs later for function-calling)
+  - parameters  : OpenAI/Anthropic-style JSON schema
+  - handler     : async fn(args) -> { text, chart?, data? } where:
+      text  : human-readable answer
+      chart : optional URL/path to a chart image for the reply
+      data  : optional structured payload (UI can render this richly)
+
+The format is intentionally close to OpenAI's function-calling spec so we
+can plug an LLM in later without rewriting handlers.
+"""
+from __future__ import annotations
+
+from typing import Any, Callable, Awaitable
+from app.fyers import client as fy
+from app.analytics.chain import normalize_chain, trade_bias
+from app.analytics.compare import compare_watchlist
+from app.analytics.scalping import scalp_signal
+from app.analytics.hedge import suggest_hedge as _suggest_hedge
+from app.analytics.payoff import compute as compute_payoff
+from app.store import store
+
+
+Handler = Callable[[dict, dict | None], Awaitable[dict]]
+
+
+def _fmt_pct(x):
+    return "—" if x is None else f"{x * 100:.2f}%"
+
+
+# ── tool: chain summary ────────────────────────────────────────
+async def t_chain_summary(args: dict, _user: dict | None) -> dict:
+    symbol = args.get("symbol", "NSE:NIFTY50-INDEX")
+    raw = await fy.option_chain(symbol, 25)
+    chain = normalize_chain(raw)
+    s = chain["summary"]
+    bias = trade_bias(s)
+    signals = " · ".join(bias["signals"]) or "no strong signals"
+    text = (
+        f"**{symbol}** spot **{chain['ltp']:,.2f}** · bias **{bias['bias']}** (score {bias['score']}).\n"
+        f"PCR (OI) {s['pcr_oi']:.2f} · Max-Pain {s['max_pain']:.0f} · ATM IV {_fmt_pct(s['atm_iv'])}.\n"
+        f"CE ΔOI {s['ce_oi_change']:,} · PE ΔOI {s['pe_oi_change']:,}.\n"
+        f"Signals: {signals}."
+    )
+    return {
+        "text": text,
+        "chart": f"/api/chart/oi?symbol={symbol}&strikecount=25",
+        "data": {"symbol": symbol, "summary": s, "bias": bias, "ltp": chain["ltp"]},
+    }
+
+
+# ── tool: hedge suggestion ─────────────────────────────────────
+async def t_suggest_hedge(args: dict, _user: dict | None) -> dict:
+    underlying = args.get("underlying") or "NSE:NIFTY50-INDEX"
+    primary_symbol = args.get("primary_option_symbol")
+    if not primary_symbol:
+        return {"text": "Tell me which option you're holding — give me the Fyers symbol like `NSE:NIFTY2660923500CE`."}
+    action = args.get("action", "BUY").upper()
+    qty = int(args.get("qty", 1))
+    raw = await fy.option_chain(underlying, 25)
+    chain = normalize_chain(raw)
+    out = _suggest_hedge(chain, primary_symbol=primary_symbol,
+                        primary_action=action, qty=qty, target_delta=0.0)  # type: ignore
+    if "legs" not in out:
+        return {"text": f"Couldn't build a hedge — {out.get('error', 'leg not found in current chain')}."}
+    pg = out["portfolio_greeks"]
+    hedge_legs = out["legs"][1:]
+    lines = []
+    for l in hedge_legs:
+        leg_id = l.get("symbol") or f"K{l['strike']} {l.get('side', '').upper()}"
+        lines.append(f"• {l['action']} {l['qty']} × {leg_id} @ ₹{l['ltp']:.2f}")
+    text = (
+        f"**Hedge for {action} {qty} × {primary_symbol}** (target Δ = 0):\n"
+        + "\n".join(lines) +
+        f"\n\nNet Δ {pg['delta']:.3f} · Vega {pg['vega']:.2f} · Net debit ₹{pg['net_debit']:.0f}."
+    )
+    return {"text": text, "data": out}
+
+
+# ── tool: scalping scan ────────────────────────────────────────
+async def t_scalp_scan(args: dict, _user: dict | None) -> dict:
+    symbol = args.get("symbol")
+    if symbol:
+        sig = await scalp_signal(symbol)
+        if not sig.get("direction"):
+            return {"text": f"No actionable scalp signal for {symbol} right now (bias {sig.get('bias',{}).get('bias')}, momentum {sig.get('momentum_pct',0):.2f}%)."}
+        leg = sig.get("suggested_leg") or {}
+        text = (
+            f"**{symbol}** scalp signal: **{sig['direction']}**\n"
+            f"Spot {sig['ltp']:.2f} · momentum {sig['momentum_pct']:.2f}%\n"
+            f"Suggested leg: {leg.get('symbol','—')} @ ₹{leg.get('ltp','—')}\n"
+            f"Stop {sig['stop_pct']}% · Target {sig['target_pct']}%."
+        )
+        return {"text": text, "data": sig}
+
+    watchlist = args.get("watchlist", "F&O Liquid")
+    wls = await store.hgetall_json("watchlists")
+    wl = wls.get(watchlist)
+    if not wl:
+        return {"text": f"Watchlist '{watchlist}' not found. Available: {', '.join(wls.keys()) or '—'}"}
+    out = []
+    actionable = []
+    for sym in wl["symbols"]:
+        try:
+            sig = await scalp_signal(sym)
+            out.append(sig)
+            if sig.get("direction"):
+                actionable.append(sig)
+        except Exception:
+            pass
+    if not actionable:
+        return {"text": f"Scanned {len(out)} symbols in **{watchlist}** — no actionable scalp setups right now."}
+    lines = [f"• **{s['symbol']}** {s['direction']} · spot {s['ltp']:.2f} · mom {s['momentum_pct']:.2f}%"
+             for s in actionable[:5]]
+    return {"text": f"**{len(actionable)} actionable scalp setups** in {watchlist}:\n" + "\n".join(lines),
+            "data": {"actionable": actionable, "all": out}}
+
+
+# ── tool: compare watchlist ────────────────────────────────────
+async def t_compare_watchlist(args: dict, _user: dict | None) -> dict:
+    name = args.get("name") or args.get("watchlist") or "F&O Liquid"
+    wls = await store.hgetall_json("watchlists")
+    wl = wls.get(name)
+    if not wl:
+        return {"text": f"Watchlist '{name}' not found. Available: {', '.join(wls.keys()) or '—'}"}
+    res = await compare_watchlist(wl["symbols"], 15)
+    rows = sorted([r for r in res["rows"] if "score" in r], key=lambda r: -r["score"])
+    top = rows[:5]
+    lines = [f"• **{r['symbol']}** · bias {r['bias']} · PCR {r['pcr_oi']:.2f} · OI Δ {r['ce_oi_change']:,}/{r['pe_oi_change']:,}"
+             for r in top]
+    return {"text": f"**{name}** — top 5 by bias score:\n" + "\n".join(lines)
+            + f"\n\n**Long candidates:** {', '.join(res['suggestions']['long_candidates']) or '—'}"
+            + f"\n**Short candidates:** {', '.join(res['suggestions']['short_candidates']) or '—'}",
+            "data": res}
+
+
+# ── tool: positions ────────────────────────────────────────────
+async def t_positions(_args: dict, _user: dict | None) -> dict:
+    try:
+        raw = await fy.positions()
+    except Exception as e:
+        return {"text": f"Could not fetch positions: {e}"}
+    nets = raw.get("netPositions", []) if isinstance(raw, dict) else []
+    open_legs = [p for p in nets if int(p.get("netQty") or 0) != 0]
+    if not open_legs:
+        return {"text": "You have no open positions right now."}
+    total_pl = sum(float(p.get("pl") or 0) for p in open_legs)
+    lines = [f"• {p['symbol']} · Net {p['netQty']} · LTP {p.get('ltp', 0)} · P&L ₹{float(p.get('pl') or 0):.0f}"
+             for p in open_legs[:10]]
+    return {"text": f"**{len(open_legs)} open legs · Net P&L ₹{total_pl:,.0f}**\n" + "\n".join(lines),
+            "data": {"positions": open_legs, "total_pl": total_pl}}
+
+
+# ── tool: analyse a strategy ───────────────────────────────────
+async def t_analyse_strategy(args: dict, _user: dict | None) -> dict:
+    underlying = args.get("underlying", "NSE:NIFTY50-INDEX")
+    legs = args.get("legs") or []
+    if not legs:
+        return {"text": "Give me legs like `[{symbol, action: BUY|SELL, qty, price, strike, option_type}]`."}
+    raw = await fy.option_chain(underlying, 25)
+    chain = normalize_chain(raw)
+    enriched = []
+    for l in legs:
+        enriched.append({
+            "symbol": l["symbol"], "instrument": "OPTION",
+            "strike": l.get("strike"), "option_type": l.get("option_type"),
+            "action": l["action"], "qty": int(l["qty"]),
+            "price": float(l.get("price", 0)),
+        })
+    payoff = compute_payoff(enriched, spot=chain["ltp"], range_pct=0.12)
+    text = (
+        f"**Payoff @ expiry** for {len(enriched)}-leg strategy on {underlying}:\n"
+        f"Max profit ₹{payoff['max_profit']:,.0f} · Max loss ₹{payoff['max_loss']:,.0f}.\n"
+        f"Breakevens: {', '.join(f'{b:.0f}' for b in payoff['breakevens']) or '—'}.\n"
+        f"Net debit ₹{payoff['net_debit']:,.0f}."
+    )
+    return {
+        "text": text,
+        "chart_post": {"url": "/api/chart/payoff", "body": {"underlying": underlying, "legs": legs}},
+        "data": {"payoff": payoff, "legs": enriched},
+    }
+
+
+# ── Registry ───────────────────────────────────────────────────
+TOOLS: dict[str, dict[str, Any]] = {
+    "chain_summary": {
+        "description": "Get chain bias, PCR, max-pain, ATM IV, and OI delta for a symbol.",
+        "parameters": {"symbol": "string (e.g. NSE:NIFTY50-INDEX)"},
+        "handler": t_chain_summary,
+    },
+    "suggest_hedge": {
+        "description": "Suggest a delta-neutral hedge for a given option position.",
+        "parameters": {"underlying": "string", "primary_option_symbol": "string", "action": "BUY|SELL", "qty": "int"},
+        "handler": t_suggest_hedge,
+    },
+    "scalp_scan": {
+        "description": "Surface actionable scalping setups for a symbol or watchlist.",
+        "parameters": {"symbol": "string (optional)", "watchlist": "string (optional, default 'F&O Liquid')"},
+        "handler": t_scalp_scan,
+    },
+    "compare_watchlist": {
+        "description": "Rank symbols in a watchlist by bias and surface long/short candidates.",
+        "parameters": {"name": "string (watchlist name)"},
+        "handler": t_compare_watchlist,
+    },
+    "positions": {
+        "description": "List the user's open positions with live P&L.",
+        "parameters": {},
+        "handler": t_positions,
+    },
+    "analyse_strategy": {
+        "description": "Compute payoff/Greeks/margin for a multi-leg options strategy.",
+        "parameters": {"underlying": "string", "legs": "list of {symbol, action, qty, price, strike, option_type}"},
+        "handler": t_analyse_strategy,
+    },
+}
+
+
+async def call_tool(name: str, args: dict, user: dict | None = None) -> dict:
+    if name not in TOOLS:
+        return {"text": f"Unknown tool `{name}`. Available: {', '.join(TOOLS)}"}
+    return await TOOLS[name]["handler"](args, user)
+
+
+def list_tools() -> list[dict]:
+    return [{"name": k, "description": v["description"], "parameters": v["parameters"]}
+            for k, v in TOOLS.items()]

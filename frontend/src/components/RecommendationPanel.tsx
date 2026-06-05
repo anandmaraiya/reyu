@@ -17,7 +17,7 @@ function getConfidence(pcr: number) {
   return { label: 'Low', tone: 'neutral' }
 }
 
-export default function RecommendationPanel({ chain }: RecommendationPanelProps) {
+export default function RecommendationPanel({ chain, onApply }: RecommendationPanelProps) {
   const summary = chain.summary
   const bias = chain.bias.bias
   const pcr = summary.pcr_oi ?? 1

@@ -2207,3 +2207,20 @@ details pre {
 }
 .greeks-heatmap th { font-weight: 500; color: var(--muted); }
 .greeks-heatmap tbody tr.atm td { font-weight: 700; }
+
+/* ── WebSocket ticker pulse ──────────────────────────────── */
+@keyframes ticker-pulse {
+  0% { transform: scale(1.8); opacity: 1; }
+  100% { transform: scale(0.4); opacity: 0; }
+}
+
+/* ── Auth page ────────────────────────────────────────────── */
+.auth-card {
+  max-width: 420px;
+  margin: 60px auto;
+}
+.auth-card input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(96,165,250,0.15);
+}

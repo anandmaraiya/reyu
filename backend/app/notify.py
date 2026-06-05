@@ -28,9 +28,9 @@ async def remove_hook(url: str) -> None:
 
 def _format_body(url: str, event: str, msg: str, extra: dict | None = None) -> dict:
     if "discord" in url:
-        return {"content": f"**[Reyu] {event}** — {msg}"}
+        return {"content": f"**[Reyu.ai] {event}** — {msg}"}
     if "telegram" in url:
-        return {"text": f"[Reyu] {event}\n{msg}"}
+        return {"text": f"[Reyu.ai] {event}\n{msg}"}
     return {"event": event, "message": msg, "extra": extra or {}}
 
 

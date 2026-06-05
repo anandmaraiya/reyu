@@ -8,12 +8,13 @@ from app.db import get_session, Instrument, OptionSnapshot, Tick1m
 from app.scheduler import seed_tracked, poll_high, poll_low
 from app.store import store
 from app.fno_universe import all_high_priority, all_low_priority
+from app.routers.user_auth import require_tier
 
 router = APIRouter()
 
 
 @router.get("/universe")
-async def universe(s: AsyncSession = Depends(get_session)):
+async def universe(s: AsyncSession = Depends(get_session), user: dict = Depends(require_tier("algo"))):
     """Counts, last poll timestamps, and per-tier breakdown."""
     res = await s.execute(
         select(Instrument.tier, func.count())
@@ -42,14 +43,14 @@ async def universe(s: AsyncSession = Depends(get_session)):
 
 
 @router.post("/reseed")
-async def reseed():
+async def reseed(user: dict = Depends(require_tier("algo"))):
     """Re-apply the F&O universe seed list. Idempotent."""
     await seed_tracked()
     return {"ok": True}
 
 
 @router.post("/poll/{tier}")
-async def trigger_poll(tier: int):
+async def trigger_poll(tier: int, user: dict = Depends(require_tier("algo"))):
     """Manually trigger a poll loop for a tier (1 or 2). Useful right after
     re-seeding to backfill snapshots without waiting for the next cron."""
     if tier == 1:

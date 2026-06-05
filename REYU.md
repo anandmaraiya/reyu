@@ -1,4 +1,4 @@
-# Reyu — Fyers Options Trading Platform
+# Reyu.ai — Fyers Options Trading Platform
 
 Single-view options analytics & risk-adjusted portfolio platform on top of the
 Fyers API v3. FastAPI backend, React + Vite frontend, Redis cache, all wired

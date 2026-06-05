@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import PayoffChart from '../components/PayoffChart'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { downloadCSV } from '../utils/csv'
 import { useToast } from '../toast'
+import { useLiveTicks } from '../hooks/useLiveTicks'
 
 const num = (n: any, d = 2) => n == null ? '—' : Number(n).toLocaleString(undefined, { maximumFractionDigits: d })
 
@@ -19,17 +20,59 @@ export default function Positions() {
   const [exitTarget, setExitTarget] = useState<ExitTarget | null>(null)
   const [exitDry, setExitDry] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+   const [livePrices, setLivePrices] = useState<Record<string, number>>({})
 
   const { data, isFetching, refetch, error } = useQuery({
     queryKey: ['pos-by-ticker'],
     queryFn: async () => (await api.get('/api/strategy/positions-by-ticker')).data,
-    refetchInterval: 15000,
-  })
+    refetchInterval: 30000,
+    })
+ 
+    // Collect all symbols from positions for WebSocket subscription
+    const allSymbols = useMemo(() => {
+    const syms: string[] = []
+    for (const g of (data?.groups ?? [])) {
+      for (const l of g.legs) {
+        if (l.symbol) syms.push(l.symbol)
+      }
+      if (g.underlying_symbol) syms.push(g.underlying_symbol)
+    }
+    return [...new Set(syms)]
+    }, [data])
 
-  const groups: any[] = data?.groups ?? []
-  const totalPL = groups.reduce((s, g) => s + (g.net_pl || 0), 0)
-  const totalMargin = groups.reduce((s, g) => s + (g.margin?.total || 0), 0)
-  const totalLegs = groups.reduce((s, g) => s + g.legs.length, 0)
+    // WebSocket live price updates for position legs
+    const { status: wsStatus, ticks } = useLiveTicks(allSymbols)
+
+    // Build live price lookup from ticks
+    useEffect(() => {
+    if (Object.keys(ticks).length > 0) {
+      const prices: Record<string, number> = {}
+      for (const [sym, tick] of Object.entries(ticks)) {
+        if (tick?.close != null) prices[sym] = tick.close
+      }
+      setLivePrices(prev => ({ ...prev, ...prices }))
+    }
+    }, [ticks])
+
+    const groups: any[] = data?.groups ?? []
+    // Enrich groups with live prices for real-time P&L
+    const liveGroups = useMemo(() => {
+    if (Object.keys(livePrices).length === 0) return groups
+    return groups.map((g: any) => ({
+      ...g,
+      legs: g.legs.map((l: any) => {
+        const liveLtp = livePrices[l.symbol]
+        if (liveLtp == null) return l
+        const qty = l.action === 'BUY' ? l.qty : -l.qty
+        const newPl = (liveLtp - l.price) * qty
+        return { ...l, ltp: liveLtp, pl: newPl }
+      }),
+    }))
+    }, [groups, livePrices])
+
+    const totalPL = liveGroups.reduce((s: number, g: any) => s + g.legs.reduce((ls: number, l: any) => ls + (l.pl || 0), 0), 0)
+    const totalMargin = liveGroups.reduce((s: number, g: any) => s + (g.margin?.total || 0), 0)
+    const totalLegs = groups.reduce((s, g) => s + g.legs.length, 0)
 
   const confirmText = (() => {
     if (!exitTarget) return ''
@@ -79,13 +122,13 @@ export default function Positions() {
 
       {error && <div className="card bear">{(error as any).message}</div>}
       {data?.error && <div className="card bear">{data.error}</div>}
-      {groups.length === 0 && (
+      {liveGroups.length === 0 && (
         <div className="card" style={{ color: 'var(--muted)' }}>
           No open positions in your Fyers account.
         </div>
       )}
-
-      {groups.map((g: any) => (
+ 
+      {liveGroups.map((g: any) => (
         <div key={g.underlying} className="card" style={{ marginBottom: 12 }}>
           <div className="row" style={{ alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
             <h3 style={{ margin: 0 }}>{g.underlying}</h3>
