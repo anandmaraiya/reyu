@@ -41,19 +41,21 @@ CHART_CACHE_TTL = 60 * 5   # 5 minutes
 
 
 def _cache_key(prefix: str, params: dict) -> str:
-    blob = json.dumps(params, sort_keys=True, default=str)
-    h = hashlib.md5(blob.encode()).hexdigest()[:12]
+    blob = json.dumps(params, sort_keys=True, default=str).encode("utf-8")
+    h = hashlib.md5(blob).hexdigest()[:12]
     return f"chart:{prefix}:{h}"
 
-
 async def _cached_or_render(prefix: str, params: dict, render_fn) -> bytes:
+    """Return cached PNG or render, cache, and return."""
     from app.store import store
+    import base64
     key = _cache_key(prefix, params)
     cached = await store.r.get(key)
     if cached:
-        return cached if isinstance(cached) else cached.encode()
+        return base64.b64decode(cached) if isinstance(cached, str) else cached
     png = render_fn()
-    await store.r.set(key, png, ex=CHART_CACHE_TTL)
+    # Store as base64 string since Redis client has decode_responses=True
+    await store.r.set(key, base64.b64encode(png).decode(), ex=CHART_CACHE_TTL)
     return png
 
 
