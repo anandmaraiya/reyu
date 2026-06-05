@@ -1,13 +1,20 @@
 """Server-side chart image endpoints.
 
-POST  /api/chart/payoff   { underlying, legs[, range_pct, points] }  → PNG
-GET   /api/chart/oi       ?symbol=&strikecount=                       → PNG
-GET   /api/chart/pcr      ?symbol=&interval=                          → PNG
+POST  /api/chart/payoff     { underlying, legs[, range_pct, points] }  -> PNG
+GET   /api/chart/oi         ?symbol=&strikecount=                     -> PNG
+GET   /api/chart/pcr        ?symbol=&interval=                        -> PNG
+GET   /api/chart/iv-smile   ?symbol=&strikecount=                     -> PNG
 
-All return image/png. Public read-only — the agent and any future
+All return image/png. Public read-only -- the agent and any future
 Telegram/Discord bots can hot-link these in their replies.
+
+Rendered charts are cached in Redis (keyed by params hash) with a
+configurable TTL so repeated views / agent calls are instant.
 """
 from __future__ import annotations
+
+import hashlib
+import json
 
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import Response
@@ -17,8 +24,11 @@ from datetime import datetime, timedelta
 from app.fyers import client as fy
 from app.analytics.chain import normalize_chain
 from app.analytics.payoff import compute as compute_payoff
-from app.charts.render import render_payoff, render_oi_distribution, render_pcr_timeseries
-from app.routers.timeseries import market_open_utc, snapshots as _snapshots_endpoint, BUCKETS, _bucket
+from app.charts.render import (
+    render_payoff, render_oi_distribution, render_pcr_timeseries,
+    render_iv_smile,
+)
+from app.routers.timeseries import market_open_utc, BUCKETS, _bucket
 from app.db import get_session, OptionSnapshot
 from fastapi import Depends
 from sqlalchemy import select
@@ -26,6 +36,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from collections import defaultdict
 
 router = APIRouter()
+
+CHART_CACHE_TTL = 60 * 5   # 5 minutes
+
+
+def _cache_key(prefix: str, params: dict) -> str:
+    blob = json.dumps(params, sort_keys=True, default=str)
+    h = hashlib.md5(blob).hexdigest()[:12]
+    return f"chart:{prefix}:{h}"
+
+
+async def _cached_or_render(prefix: str, params: dict, render_fn) -> bytes:
+    from app.store import store
+    key = _cache_key(prefix, params)
+    cached = await store.r.get(key)
+    if cached:
+        return cached if isinstance(cached) else cached.encode()
+    png = render_fn()
+    await store.r.set(key, png, ex=CHART_CACHE_TTL)
+    return png
 
 
 class PayoffChartLeg(BaseModel):
@@ -49,7 +78,6 @@ async def chart_payoff(req: PayoffChartRequest):
     raw = await fy.option_chain(req.underlying, 25)
     chain = normalize_chain(raw)
 
-    # Same enrichment as the strategy router — pull strike/option_type from chain when missing
     chain_lookup: dict[str, dict] = {}
     for row in chain.get("strikes", []):
         for side in ("ce", "pe"):
@@ -71,8 +99,11 @@ async def chart_payoff(req: PayoffChartRequest):
     if "points" not in payoff:
         raise HTTPException(400, payoff.get("error", "payoff computation failed"))
 
-    title = f"{req.underlying} — {len(legs)}-leg payoff @ expiry"
-    return Response(render_payoff(payoff, title=title), media_type="image/png")
+    title = f"{req.underlying} -- {len(legs)}-leg payoff @ expiry"
+    params = {"underlying": req.underlying, "legs": [l.dict() for l in req.legs],
+              "range_pct": req.range_pct, "points": req.points}
+    png = await _cached_or_render("payoff", params, lambda: render_payoff(payoff, title=title))
+    return Response(png, media_type="image/png")
 
 
 @router.get("/oi", responses={200: {"content": {"image/png": {}}}})
@@ -80,20 +111,20 @@ async def chart_oi(symbol: str = Query(..., description="e.g. NSE:NIFTY50-INDEX"
                    strikecount: int = 25):
     raw = await fy.option_chain(symbol, strikecount)
     chain = normalize_chain(raw)
-    img = render_oi_distribution(
+    params = {"symbol": symbol, "strikecount": strikecount}
+    png = await _cached_or_render("oi", params, lambda: render_oi_distribution(
         chain["strikes"], spot=chain["ltp"],
         max_pain=chain["summary"].get("max_pain"),
         atm=chain["summary"].get("atm_strike"),
-        title=f"{symbol} — OI distribution"
-    )
-    return Response(img, media_type="image/png")
+        title=f"{symbol} -- OI distribution",
+    ))
+    return Response(png, media_type="image/png")
 
 
 @router.get("/pcr", responses={200: {"content": {"image/png": {}}}})
 async def chart_pcr(symbol: str = Query(...),
                     interval: str = "5m",
                     s: AsyncSession = Depends(get_session)):
-    """5m-bucketed PCR + ΔOI for today's session. Same data as /api/ts/snapshots."""
     lower_bound = max(datetime.utcnow() - timedelta(days=1), market_open_utc())
     q = (
         select(OptionSnapshot)
@@ -118,5 +149,23 @@ async def chart_pcr(symbol: str = Query(...),
             "pe_oi_delta": (last.total_pe_oi or 0) - (first.total_pe_oi or 0),
         })
 
-    img = render_pcr_timeseries(out, title=f"{symbol} — PCR & ΔOI · today")
-    return Response(img, media_type="image/png")
+    params = {"symbol": symbol, "interval": interval}
+    png = await _cached_or_render("pcr", params, lambda: render_pcr_timeseries(
+        out, title=f"{symbol} -- PCR & delta-OI"
+    ))
+    return Response(png, media_type="image/png")
+
+
+@router.get("/iv-smile", responses={200: {"content": {"image/png": {}}}})
+async def chart_iv_smile(symbol: str = Query(..., description="e.g. NSE:NIFTY50-INDEX"),
+                         strikecount: int = 25):
+    """Plot CE and PE implied volatility across strikes (the volatility smile)."""
+    raw = await fy.option_chain(symbol, strikecount)
+    chain = normalize_chain(raw)
+    params = {"symbol": symbol, "strikecount": strikecount}
+    png = await _cached_or_render("iv-smile", params, lambda: render_iv_smile(
+        chain["strikes"], spot=chain["ltp"],
+        atm=chain["summary"].get("atm_strike"),
+        title=f"{symbol} -- IV smile",
+    ))
+    return Response(png, media_type="image/png")

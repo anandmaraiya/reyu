@@ -46,13 +46,14 @@ def _detect_watchlist(text: str) -> str | None:
     return None
 
 
-# Intent keywords → tool. Order matters: more specific patterns first.
+# Intent keywords -> tool. Order matters: more specific patterns first.
 _INTENTS = [
     (r"\b(positions?|open trade|my book|p&?l)\b", "positions"),
     (r"\b(hedge|delta[- ]?neutral|protect|cover)\b", "suggest_hedge"),
     (r"\b(scalp|scalping|quick|signal|setup)\b", "scalp_scan"),
     (r"\b(compare|watchlist|leaderboard|rank|scan)\b", "compare_watchlist"),
     (r"\b(payoff|p&?l curve|max profit|strategy[: ]+?analy|analyse strategy)\b", "analyse_strategy"),
+    (r"\b(chart|oi chart|iv smile|volatility smile|iv chart|pcr chart|show me.*chart)\b", "chart_request"),
     (r"\b(pcr|max[- ]?pain|atm iv|bias|trend|chain|skew|put[- ]?call)\b", "chain_summary"),
 ]
 
@@ -111,6 +112,19 @@ def route(text: str) -> dict:
     elif tool == "analyse_strategy":
         if sym and "-INDEX" in sym:
             args["underlying"] = sym
+
+    elif tool == "chart_request":
+        args["symbol"] = sym or "NSE:NIFTY50-INDEX"
+        # Detect chart type from text
+        t = text.lower()
+        if "iv smile" in t or "volatility smile" in t or "iv chart" in t:
+            args["chart_type"] = "iv-smile"
+        elif "pcr" in t:
+            args["chart_type"] = "pcr"
+        elif "oi" in t:
+            args["chart_type"] = "oi"
+        else:
+            args["chart_type"] = "oi"
 
     elif tool == "positions":
         pass

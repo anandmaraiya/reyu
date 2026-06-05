@@ -52,6 +52,26 @@ async def t_chain_summary(args: dict, _user: dict | None) -> dict:
     }
 
 
+# -- tool: chart request (explicit chart intent) ------------------
+async def t_chart_request(args: dict, _user: dict | None) -> dict:
+    """Handle explicit chart requests like 'show me NIFTY IV smile'."""
+    symbol = args.get("symbol", "NSE:NIFTY50-INDEX")
+    chart_type = args.get("chart_type", "oi")
+
+    chart_urls = {
+        "oi": f"/api/chart/oi?symbol={symbol}&strikecount=25",
+        "pcr": f"/api/chart/pcr?symbol={symbol}&interval=5m",
+        "iv-smile": f"/api/chart/iv-smile?symbol={symbol}&strikecount=25",
+        "iv_smile": f"/api/chart/iv-smile?symbol={symbol}&strikecount=25",
+    }
+    url = chart_urls.get(chart_type, chart_urls["oi"])
+    return {
+        "text": f"Here's the {chart_type} chart for {symbol}:",
+        "chart": url,
+        "data": {"symbol": symbol, "chart_type": chart_type},
+    }
+
+
 # ── tool: hedge suggestion ─────────────────────────────────────
 async def t_suggest_hedge(args: dict, _user: dict | None) -> dict:
     underlying = args.get("underlying") or "NSE:NIFTY50-INDEX"
@@ -215,6 +235,11 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": "Compute payoff/Greeks/margin for a multi-leg options strategy.",
         "parameters": {"underlying": "string", "legs": "list of {symbol, action, qty, price, strike, option_type}"},
         "handler": t_analyse_strategy,
+    },
+    "chart_request": {
+        "description": "Return a chart image URL for a symbol. chart_type: oi, pcr, iv-smile.",
+        "parameters": {"symbol": "string", "chart_type": "string (oi|pcr|iv-smile)"},
+        "handler": t_chart_request,
     },
 }
 

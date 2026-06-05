@@ -169,3 +169,41 @@ def render_pcr_timeseries(rows: list[dict], title: str = "PCR & OI delta — tod
 
     fig.suptitle(title, fontsize=14, fontweight="bold", x=0.07, y=0.97, ha="left")
     return _save(fig)
+
+
+# -- Chart 4: IV smile (CE + PE implied volatility vs strike) --
+def render_iv_smile(strikes: list[dict], spot: float, atm: float | None,
+                    title: str = "IV smile") -> bytes:
+    """strikes = list of {strike, ce:{iv}, pe:{iv}}  (iv from normalize_chain)."""
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+
+    xs = [s["strike"] for s in strikes]
+    ce_iv = [(s.get("ce") or {}).get("iv") for s in strikes]
+    pe_iv = [(s.get("pe") or {}).get("iv") for s in strikes]
+
+    ce_pairs = [(x, iv) for x, iv in zip(xs, ce_iv) if iv is not None]
+    pe_pairs = [(x, iv) for x, iv in zip(xs, pe_iv) if iv is not None]
+
+    if ce_pairs:
+        cx, cy = zip(*ce_pairs)
+        ax.plot(cx, cy, color=PALETTE["red"], linewidth=2, marker="o", markersize=3,
+                label="CE IV", alpha=0.9)
+    if pe_pairs:
+        px, py = zip(*pe_pairs)
+        ax.plot(px, py, color=PALETTE["green"], linewidth=2, marker="o", markersize=3,
+                label="PE IV", alpha=0.9)
+
+    if atm:
+        ax.axvline(atm, color=PALETTE["accent"], linewidth=1.2, linestyle="--",
+                   label=f"ATM {atm:,.0f}")
+    ax.axvline(spot, color=PALETTE["amber"], linewidth=1.0, linestyle=":",
+               alpha=0.7, label=f"Spot {spot:,.0f}")
+
+    ax.set_title(title, fontsize=14, fontweight="bold", pad=12, loc="left")
+    ax.set_xlabel("Strike")
+    ax.set_ylabel("Implied volatility")
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v*100:.1f}%"))
+    ax.grid(True, alpha=0.4)
+    ax.legend(loc="upper right", frameon=False, fontsize=10)
+
+    return _save(fig)

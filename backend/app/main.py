@@ -7,7 +7,7 @@ from fastapi.openapi.utils import get_openapi
 from app.routers import (
     auth, user_auth, options, analytics, watchlist, portfolio, scalping,
     timeseries, stream, orders, strategy, system, journal, notify, admin, chat, charts, telegram,
-    backtest,
+    backtest, billing, data_api,webhook_subs
 )
 from app.store import store
 from app.db import init_db

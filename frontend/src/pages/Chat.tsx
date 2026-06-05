@@ -8,6 +8,8 @@ type Msg = {
   tool_args?: any
   data?: any
   chart?: string
+  chart_inline?: string
+  chart_post?: { url: string; body: any }
   ts?: string
 }
 
@@ -25,6 +27,9 @@ const PROMPTS = [
   "Any scalping setups in F&O Liquid?",
   "Compare watchlist 'F&O Liquid'",
   "Show my open positions",
+  "Show me NIFTY OI chart",
+  "Show me NIFTY IV smile",
+  "Show me NIFTY payoff chart",
 ]
 
 const SESSION_STORAGE_KEY = 'reyu_chat_session_id'
@@ -104,6 +109,8 @@ export default function Chat() {
         tool_args: data.tool_args,
         data: data.data,
         chart: data.chart || undefined,
+        chart_inline: data.chart_inline || undefined,
+        chart_post: data.chart_post || undefined,
         ts: data.ts,
       }])
     } catch (e: any) {
@@ -267,6 +274,25 @@ export default function Chat() {
 
 function MessageBubble({ m }: { m: Msg }) {
   const isUser = m.role === 'user'
+  const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+  const [postChart, setPostChart] = useState<string | null>(null)
+
+  // Fetch POST-based chart on mount
+  useEffect(() => {
+    if (m.chart_post && !postChart) {
+      const url = m.chart_post.url.startsWith('/')
+        ? apiBase + m.chart_post.url
+        : m.chart_post.url
+      api.post(url, m.chart_post.body).then(res => {
+        // Response is binary PNG, convert to blob URL
+        const blob = new Blob([res.data], { type: 'image/png' })
+        setPostChart(URL.createObjectURL(blob))
+      }).catch(() => {
+        setPostChart('error')
+      })
+    }
+  }, [m.chart_post])
+
   return (
     <div style={{
       display: 'flex',
@@ -287,9 +313,27 @@ function MessageBubble({ m }: { m: Msg }) {
       }}>
         {renderMarkdown(m.content)}
         {m.chart && (
-          <img src={(import.meta.env.VITE_API_BASE || 'http://localhost:8000') + m.chart}
+          <img src={apiBase + m.chart}
                alt="chart"
                style={{ display: 'block', width: '100%', marginTop: 10, borderRadius: 8, border: '1px solid var(--border)' }} />
+        )}
+        {m.chart_inline && (
+          <img src={m.chart_inline}
+               alt="chart"
+               style={{ display: 'block', width: '100%', marginTop: 10, borderRadius: 8, border: '1px solid var(--border)' }} />
+        )}
+        {m.chart_post && (
+          <div style={{ marginTop: 10 }}>
+            {postChart && postChart !== 'error' ? (
+              <img src={postChart}
+                   alt="chart"
+                   style={{ display: 'block', width: '100%', borderRadius: 8, border: '1px solid var(--border)' }} />
+            ) : postChart === 'error' ? (
+              <div style={{ fontSize: 11, color: 'var(--muted)', padding: '8px 0' }}>Chart unavailable</div>
+            ) : (
+              <div style={{ fontSize: 11, color: 'var(--muted)', padding: '8px 0' }}>Loading chart...</div>
+            )}
+          </div>
         )}
         {m.tool && (
           <div style={{ marginTop: 6, fontSize: 10, color: 'var(--muted)' }}>
