@@ -42,7 +42,7 @@ CHART_CACHE_TTL = 60 * 5   # 5 minutes
 
 def _cache_key(prefix: str, params: dict) -> str:
     blob = json.dumps(params, sort_keys=True, default=str)
-    h = hashlib.md5(blob).hexdigest()[:12]
+    h = hashlib.md5(blob.encode()).hexdigest()[:12]
     return f"chart:{prefix}:{h}"
 
 
