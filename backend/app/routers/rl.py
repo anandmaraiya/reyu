@@ -24,6 +24,8 @@ from app.rl.trainer import train_on_closed_trades
 from app.rl.policy import Policy, ACTIONS
 from app.rl.backfill import backfill_underlying, train_test_underlying
 from app.fno_universe import all_high_priority
+from app.fyers.master import sync_lot_sizes
+from app.fyers.symbols import resolve as resolve_symbol
 
 router = APIRouter()
 
@@ -207,6 +209,7 @@ async def train_and_save(
     min_conviction: float = Query(0.05, ge=0.0, le=0.9),
     lr: float = Query(0.10, gt=0, lt=1),
     epochs: int = Query(1, ge=1, le=20),
+    weight_decay: float = Query(0.0, ge=0.0, le=0.1),
     s: AsyncSession = Depends(get_session),
 ):
     """Train the policy on the full window (no test split — every day
@@ -219,6 +222,7 @@ async def train_and_save(
         min_conviction=min_conviction,
         target_pct_override=target_pct, stop_pct_override=stop_pct,
         lr=lr, epochs=epochs, sequential=True,
+        weight_decay=weight_decay,
     )
     # Persist the live-only config so inference uses these brackets / filter
     row = (await s.execute(select(RLPolicy).where(RLPolicy.underlying == underlying))).scalar_one()
@@ -256,27 +260,31 @@ async def evaluate(
         description="Number of replay passes over the training window"),
     starting_capital: float = Query(100_000, ge=10_000, le=10_000_000,
         description="Starting INR capital for ROI sim"),
-    lot_size: int = Query(65, ge=1, le=10_000,
-        description="Lot size — NIFTY is 65"),
+    lot_size: int | None = Query(None, ge=1, le=10_000,
+        description="Override lot size; if omitted the instrument table value (synced from Fyers) is used"),
     brokerage_per_trade: float = Query(50.0, ge=0.0, le=500.0,
         description="Flat per-trade cost (brokerage + STT + GST proxy)"),
     sequential: bool = Query(True,
         description="Enforce one-trade-at-a-time (matches live)"),
+    weight_decay: float = Query(0.0, ge=0.0, le=0.1,
+        description="L2 weight decay for policy.update (0 = no regularization)"),
     s: AsyncSession = Depends(get_session),
 ):
     """Train/test split with optional knobs to A/B configurations.
     When `sequential=true`, only one trade is open at any time and ROI
-    is computed against `starting_capital` × `lot_size` premium outlay."""
+    is computed against `starting_capital` x `lot_size` premium outlay."""
     out = []
     for sym in symbols:
+        eff_lot = lot_size or (await resolve_symbol(sym)).lot_size or 1
         r = await train_test_underlying(
             s, sym, total_days=total_days, test_days=test_days,
             min_conviction=min_conviction,
             target_pct_override=target_pct, stop_pct_override=stop_pct,
             lr=lr, epochs=epochs,
-            starting_capital=starting_capital, lot_size=lot_size,
+            starting_capital=starting_capital, lot_size=eff_lot,
             brokerage_per_trade=brokerage_per_trade,
             sequential=sequential,
+            weight_decay=weight_decay,
         )
         out.append({
             "underlying": r.underlying,
@@ -314,14 +322,18 @@ async def tune(
     epochs_grid: str = Query("1,2,4",
         description="Comma-separated epoch grid"),
     starting_capital: float = Query(100_000),
-    lot_size: int = Query(65),
+    lot_size: int | None = Query(None,
+        description="Override lot; defaults to Fyers-synced instrument value"),
     brokerage_per_trade: float = Query(50.0),
+    weight_decay: float = Query(0.0, ge=0.0, le=0.1,
+        description="L2 weight decay for policy.update"),
     s: AsyncSession = Depends(get_session),
 ):
     """LR × epochs grid search. Returns all results sorted by OOS ROI %
     so you can see how the bandit responds to each setting."""
     lr_list = [float(x) for x in lrs.split(",") if x.strip()]
     ep_list = [int(x) for x in epochs_grid.split(",") if x.strip()]
+    eff_lot = lot_size or (await resolve_symbol(underlying)).lot_size or 1
     grid = []
     for lr in lr_list:
         for ep in ep_list:
@@ -330,9 +342,10 @@ async def tune(
                 min_conviction=min_conviction,
                 target_pct_override=target_pct, stop_pct_override=stop_pct,
                 lr=lr, epochs=ep,
-                starting_capital=starting_capital, lot_size=lot_size,
+                starting_capital=starting_capital, lot_size=eff_lot,
                 brokerage_per_trade=brokerage_per_trade,
                 sequential=True,
+                weight_decay=weight_decay,
             )
             roi = getattr(r, "roi", {}) or {}
             grid.append({
@@ -346,7 +359,17 @@ async def tune(
                 "trades_taken": roi.get("trades_taken"),
             })
     grid.sort(key=lambda r: (r["roi_pct"] is None, -(r["roi_pct"] or -1e9)))
-    return {"underlying": underlying, "grid": grid, "best": grid[0] if grid else None}
+    return {"underlying": underlying, "lot_size": eff_lot,
+            "grid": grid, "best": grid[0] if grid else None}
+
+
+@router.post("/sync-lot-sizes")
+async def sync_lots():
+    """Refresh per-symbol lot sizes from Fyers' public symbol-master CSV.
+    Run after market hours when NSE rolls quarterly contract specs, or
+    just once on a fresh deploy. Idempotent — re-running just updates."""
+    res = await sync_lot_sizes()
+    return {"ok": True, **res}
 
 
 @router.post("/backfill")

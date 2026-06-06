@@ -22,11 +22,13 @@ from app.db import SessionLocal, Instrument
 
 InstrumentType = Literal["EQUITY", "INDEX", "OPTION", "FUTURE", "UNKNOWN"]
 
-# Current NSE index F&O lot sizes (Jan 2026 — verify on https://www.nseindia.com).
+# Fallback lot sizes — DB rows (synced from Fyers via /api/rl/sync-lot-sizes)
+# override these. Kept in sync with the master CSV as of Jun 2026; refresh
+# whenever NSE pushes quarterly contract specs.
 INDEX_LOTS = {
-    "NIFTY": 75,
+    "NIFTY": 65,
     "BANKNIFTY": 30,
-    "FINNIFTY": 65,
+    "FINNIFTY": 60,
     "MIDCPNIFTY": 120,
     "NIFTYNXT50": 25,
     "SENSEX": 20,

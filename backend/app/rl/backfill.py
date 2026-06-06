@@ -29,6 +29,7 @@ import json
 import logging
 import math
 import statistics
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, date, timedelta, timezone
 from typing import Any
@@ -46,6 +47,31 @@ from app.fyers import client as fy
 
 log = logging.getLogger("reyu.rl.backfill")
 IST = timezone(timedelta(hours=5, minutes=30))
+
+# ── Retry helper for Fyers API rate limits ──────────────────────
+async def _fetch_history_with_retry(
+    underlying: str,
+    resolution: str,
+    range_from: str,
+    range_to: str,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+) -> dict:
+    """Fetch Fyers history with exponential backoff on failure."""
+    for attempt in range(max_retries):
+        try:
+            return await fy.history(underlying, resolution=resolution,
+                                     range_from=range_from, range_to=range_to)
+        except Exception as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                log.warning("history %s %s failed (attempt %d/%d): %s — retrying in %.1fs",
+                            underlying, range_from, attempt + 1, max_retries, e, delay)
+                await asyncio.sleep(delay)
+            else:
+                log.warning("history %s %s failed after %d attempts: %s",
+                            underlying, range_from, max_retries, e)
+                raise
 
 
 # ── Strike rounding heuristics per underlying ────────────────────
@@ -139,14 +165,17 @@ async def _simulate_session(
     epsilon: float,
     underlying: str,
     min_conviction: float = 0.0,
-) -> tuple[int, int, int, int, float]:
-    """Replay one trading day. Returns (n_trades, wins, losses, timeouts, cum_reward)."""
+    lr: float | None = None,
+    weight_decay: float = 0.0,
+) -> tuple[list[dict], int, int, int, float]:
+    """Replay one trading day. Returns (trade_dicts, wins, losses, timeouts, cum_reward)."""
     if len(candles_5m) < 10:
-        return 0, 0, 0, 0, 0.0
+        return [], 0, 0, 0, 0.0
     step = _strike_step(underlying)
     open_close_prev = None
 
-    trades = wins = losses = timeouts = 0
+    trade_dicts: list[dict] = []
+    wins = losses = timeouts = 0
     cum_reward = 0.0
     # Skip the final 4 bars (~20 minutes) so the policy always has room to
     # see a TP/SL before timeout.
@@ -184,8 +213,13 @@ async def _simulate_session(
 
         pnl_pct = (exit_prem / entry_prem - 1.0) * 100
         reward = reward_for(status, pnl_pct, target_pct, stop_pct)
-        pol.update(features, action_idx, reward)
-        trades += 1
+        pol.update(features, action_idx, reward, lr=lr, weight_decay=weight_decay)
+        trade_dicts.append({
+            "entry_idx": idx, "exit_idx": j,
+            "entry_prem": entry_prem, "exit_prem": exit_prem,
+            "action": action, "status": status,
+            "pnl_pct": pnl_pct, "reward": reward,
+        })
         cum_reward += reward
         if status == "TP":
             wins += 1
@@ -194,7 +228,7 @@ async def _simulate_session(
         else:
             timeouts += 1
 
-    return trades, wins, losses, timeouts, cum_reward
+    return trade_dicts, wins, losses, timeouts, cum_reward
 
 
 async def backfill_underlying(
@@ -229,8 +263,9 @@ async def backfill_underlying(
 
     for d in iter_trading_days(start, today - timedelta(days=1)):
         try:
-            hist = await fy.history(underlying, resolution="5",
-                                    range_from=d.isoformat(), range_to=d.isoformat())
+            hist = await _fetch_history_with_retry(
+                underlying, resolution="5",
+                range_from=d.isoformat(), range_to=d.isoformat())
         except Exception as e:
             log.warning("history %s %s failed: %s", underlying, d, e)
             continue
@@ -238,10 +273,10 @@ async def backfill_underlying(
         if len(candles) < 10:
             continue
         sessions += 1
-        t, w, l, to, r = await _simulate_session(
+        tr_dicts, w, l, to, r = await _simulate_session(
             candles, pol, target_pct, stop_pct, eps, underlying
         )
-        trades += t; wins += w; losses += l; timeouts += to; cum_reward += r
+        trades += len(tr_dicts); wins += w; losses += l; timeouts += to; cum_reward += r
 
     # Save updated policy
     row.weights = pol.to_json()
@@ -271,6 +306,7 @@ def _seq_simulate_session(
     min_conviction: float = 0.0,
     train: bool = False,
     lr: float | None = None,
+    weight_decay: float = 0.0,
 ) -> list[dict]:
     if len(candles_5m) < 10:
         return []
@@ -320,7 +356,7 @@ def _seq_simulate_session(
         pnl_pct = (exit_prem / entry_prem - 1.0) * 100
         reward = reward_for(status, pnl_pct, target_pct, stop_pct)
         if train:
-            pol.update(features, action_idx, reward, lr=lr)
+            pol.update(features, action_idx, reward, lr=lr, weight_decay=weight_decay)
         trades.append({
             "entry_idx": idx, "exit_idx": exit_idx,
             "entry_prem": entry_prem, "exit_prem": exit_prem,
@@ -481,6 +517,7 @@ async def train_test_underlying(
     lot_size: int = 65,
     brokerage_per_trade: float = 50.0,
     sequential: bool = True,
+    weight_decay: float = 0.0,
 ) -> TrainTestResult:
     """End-to-end evaluation:
         1. Wipe the policy.
@@ -517,8 +554,9 @@ async def train_test_underlying(
     train_sessions: list[list] = []
     for d in iter_trading_days(train_start, train_end):
         try:
-            hist = await fy.history(underlying, resolution="5",
-                                    range_from=d.isoformat(), range_to=d.isoformat())
+            hist = await _fetch_history_with_retry(
+                underlying, resolution="5",
+                range_from=d.isoformat(), range_to=d.isoformat())
         except Exception:
             continue
         candles = hist.get("candles") or []
@@ -527,8 +565,9 @@ async def train_test_underlying(
     test_sessions: list[list] = []
     for d in iter_trading_days(test_start, test_end):
         try:
-            hist = await fy.history(underlying, resolution="5",
-                                    range_from=d.isoformat(), range_to=d.isoformat())
+            hist = await _fetch_history_with_retry(
+                underlying, resolution="5",
+                range_from=d.isoformat(), range_to=d.isoformat())
         except Exception:
             continue
         candles = hist.get("candles") or []
@@ -544,13 +583,14 @@ async def train_test_underlying(
                 tr = _seq_simulate_session(
                     candles, pol, target_pct, stop_pct, eps, underlying,
                     min_conviction=min_conviction, train=True, lr=lr,
+                    weight_decay=weight_decay,
                 )
             else:
-                t, w, l, to, r = await _simulate_session(
+                tr, _w, _l, _to, _r = await _simulate_session(
                     candles, pol, target_pct, stop_pct, eps, underlying,
-                    min_conviction=min_conviction,
+                    min_conviction=min_conviction, lr=lr,
+                    weight_decay=weight_decay,
                 )
-                tr = []
             ep_trades.extend(tr)
         # Only retain the last epoch's trades for stats reporting
         if ep == epochs - 1:
@@ -574,11 +614,10 @@ async def train_test_underlying(
                 min_conviction=min_conviction, train=False,
             )
         else:
-            m = await _evaluate_session(
-                candles, pol, target_pct, stop_pct, underlying,
+            tr, _w, _l, _to, _r = await _simulate_session(
+                candles, pol, target_pct, stop_pct, 0.0, underlying,
                 min_conviction=min_conviction,
             )
-            tr = []
         test_trades_all.extend(tr)
 
     test_n = len(test_trades_all)

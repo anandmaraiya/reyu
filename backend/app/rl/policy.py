@@ -83,11 +83,14 @@ class Policy:
 
     # ── normalisation ──────────────────────────────────────────
     def update_running_stats(self, x: list[float]) -> None:
-        """EWMA update of running mean + std for input features."""
+        """EWMA update of running mean + std for input features.
+        Zero-padded dims (always 0) are detected and their sigma is kept
+        high so they don't produce extreme z-scores when real data arrives."""
         for i, v in enumerate(x):
             d = v - self.mu[i]
             self.mu[i] += EWMA_ALPHA * d
             self.sigma[i] = (1 - EWMA_ALPHA) * self.sigma[i] + EWMA_ALPHA * abs(d)
+            # Floor: keep sigma at least 1e-3 to avoid div-by-zero
             if self.sigma[i] < 1e-3:
                 self.sigma[i] = 1e-3
 
@@ -140,10 +143,13 @@ class Policy:
 
     # ── learning ───────────────────────────────────────────────
     def update(self, x: list[float], action: int, reward: float,
-               lr: float | None = None) -> dict:
+               lr: float | None = None,
+               weight_decay: float = 0.0) -> dict:
         """Single-trade REINFORCE update with EWMA baseline.
         `lr` overrides the module default — used by the hyperparameter
-        tuner so we can A/B different rates without mutating the constant."""
+        tuner so we can A/B different rates without mutating the constant.
+        `weight_decay` (L2) shrinks weights toward zero each update to
+        prevent overfitting when data is noisy or features are sparse."""
         rate = LR if lr is None else lr
         self.n_updates += 1
         self.update_running_stats(x)
@@ -154,10 +160,13 @@ class Policy:
             grad_coef = (1.0 if a == action else 0.0) - probs[a]
             if a == 0:        # LONG
                 for i in range(FEATURE_DIM):
+                    # L2 decay: shrink weight toward 0 before gradient step
+                    self.w_long[i] *= (1.0 - rate * weight_decay)
                     self.w_long[i] += rate * advantage * grad_coef * xn[i]
                 self.b_long += rate * advantage * grad_coef
             elif a == 1:      # SHORT
                 for i in range(FEATURE_DIM):
+                    self.w_short[i] *= (1.0 - rate * weight_decay)
                     self.w_short[i] += rate * advantage * grad_coef * xn[i]
                 self.b_short += rate * advantage * grad_coef
             # FLAT has no weights to update — it's the baseline
