@@ -50,7 +50,8 @@ async def _decide_one(s: AsyncSession, underlying: str, paper: bool = True) -> d
 
     pol = Policy.from_json(pol_row.weights)
     eps = adjusted_epsilon(pol_row.epsilon or 0.10, pol_row.n_trades or 0)
-    action_idx, logprob, probs = pol.act(state["features"], eps)
+    min_conv = pol_row.min_conviction or 0.0
+    action_idx, logprob, probs = pol.act(state["features"], eps, min_conviction=min_conv)
     action = ACTIONS[action_idx]
 
     # Don't double-open positions for the same underlying

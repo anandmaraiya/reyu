@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
-from app.db import SessionLocal, Instrument, Tick1m, OptionSnapshot
+from app.db import SessionLocal, Instrument, Tick1m, OptionSnapshot, OptionStrikeSnapshot
 from app.fyers import client as fy
 from app.fno_universe import all_high_priority, all_low_priority
 from app.analytics.chain import normalize_chain, trade_bias
@@ -113,10 +113,10 @@ async def _save_snapshot(symbol: str) -> None:
     except Exception:
         expiry_dt = datetime.utcnow()
 
+    snap_ts = datetime.utcnow().replace(second=0, microsecond=0)
     async with SessionLocal() as s:
         stmt = pg_insert(OptionSnapshot).values(
-            ts=datetime.utcnow().replace(second=0, microsecond=0),
-            symbol=symbol, expiry=expiry_dt,
+            ts=snap_ts, symbol=symbol, expiry=expiry_dt,
             ltp=chain["ltp"],
             pcr_oi=summary.get("pcr_oi") or 0,
             pcr_volume=summary.get("pcr_volume") or 0,
@@ -130,6 +130,32 @@ async def _save_snapshot(symbol: str) -> None:
             bias_score=bias["score"],
         ).on_conflict_do_nothing()
         await s.execute(stmt)
+
+        # Per-strike snapshot — ATM ± 10 strikes so future RL training has
+        # real per-leg OI / IV / premium history (not just aggregates).
+        atm = summary.get("atm_strike")
+        sorted_strikes = sorted(chain["strikes"], key=lambda r: r["strike"])
+        atm_idx = next((i for i, r in enumerate(sorted_strikes) if r["strike"] == atm), -1)
+        if atm_idx >= 0:
+            window = sorted_strikes[max(0, atm_idx - 10): atm_idx + 11]
+            for row in window:
+                ce = row.get("ce") or {}
+                pe = row.get("pe") or {}
+                if not ce.get("symbol") and not pe.get("symbol"):
+                    continue
+                await s.execute(pg_insert(OptionStrikeSnapshot).values(
+                    ts=snap_ts, underlying=symbol, strike=row["strike"], expiry=expiry_dt,
+                    ce_oi=int(ce.get("oi") or 0),
+                    ce_oi_change=int(ce.get("oi_change") or 0),
+                    ce_volume=int(ce.get("volume") or 0),
+                    ce_ltp=ce.get("ltp"), ce_iv=ce.get("iv"),
+                    pe_oi=int(pe.get("oi") or 0),
+                    pe_oi_change=int(pe.get("oi_change") or 0),
+                    pe_volume=int(pe.get("volume") or 0),
+                    pe_ltp=pe.get("ltp"), pe_iv=pe.get("iv"),
+                    spot=chain["ltp"],
+                ).on_conflict_do_nothing())
+
         await s.commit()
 
     await store.r.publish(f"chain:{symbol}", json.dumps({
@@ -176,8 +202,15 @@ async def poll_all() -> None:
 
 
 async def rl_decide_cycle() -> None:
-    """5-minute inference cycle — runs decisions across tier-1 universe."""
+    """5-minute inference cycle — runs decisions across tier-1 universe.
+    Skipped outside NSE trading hours (Mon–Fri 09:15–15:30 IST); the sweep
+    cycle continues so any in-flight trades are still managed and
+    eventually time out at close."""
     from app.rl.inference import decide_universe
+    from app.rl.calendar import is_trading_hours
+    if not is_trading_hours():
+        log.debug("RL decide skipped — market closed")
+        return
     try:
         results = await decide_universe()
     except Exception as e:

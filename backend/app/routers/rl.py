@@ -22,6 +22,7 @@ from app.rl.features import FEATURE_NAMES, FEATURE_DIM
 from app.rl.inference import decide_universe, score_universe
 from app.rl.trainer import train_on_closed_trades
 from app.rl.policy import Policy, ACTIONS
+from app.rl.backfill import backfill_underlying, train_test_underlying
 from app.fno_universe import all_high_priority
 
 router = APIRouter()
@@ -36,6 +37,7 @@ async def list_policies(s: AsyncSession = Depends(get_session)):
         "win_rate": round(r.n_wins / r.n_trades, 3) if r.n_trades else None,
         "cum_reward": r.cum_reward, "epsilon": r.epsilon,
         "enabled": r.enabled,
+        "target_pct": r.target_pct, "stop_pct": r.stop_pct,
         "last_trained_at": r.last_trained_at.isoformat() if r.last_trained_at else None,
     } for r in rows]
 
@@ -50,12 +52,30 @@ async def get_policy(underlying: str, s: AsyncSession = Depends(get_session)):
         "underlying": underlying,
         "n_trades": row.n_trades, "n_wins": row.n_wins, "cum_reward": row.cum_reward,
         "epsilon": row.epsilon, "enabled": row.enabled,
+        "target_pct": row.target_pct, "stop_pct": row.stop_pct,
         "baseline": pol.baseline, "n_updates": pol.n_updates,
         "feature_names": FEATURE_NAMES,
         "w_long": pol.w_long, "w_short": pol.w_short,
         "b_long": pol.b_long, "b_short": pol.b_short,
         "feature_mean": pol.mu, "feature_std": pol.sigma,
     }
+
+
+@router.post("/policies/reset-all")
+async def reset_all_policies(
+    confirm: bool = Query(False, description="Must be true — destructive"),
+    s: AsyncSession = Depends(get_session),
+):
+    """Wipe every policy's weights + counters. Use after the feature
+    schema changes (FEATURE_DIM bump) so the bandit retrains against the
+    new layout from a clean state."""
+    if not confirm:
+        raise HTTPException(400, "Pass ?confirm=true to wipe all policy weights")
+    res = await s.execute(update(RLPolicy).values(
+        weights="{}", n_trades=0, n_wins=0, cum_reward=0.0, last_trained_at=None,
+    ))
+    await s.commit()
+    return {"ok": True, "policies_reset": res.rowcount}
 
 
 @router.post("/policy/{underlying:path}/reset")
@@ -148,3 +168,204 @@ async def decide_now(symbols: list[str] | None = None):
 async def trigger_train(s: AsyncSession = Depends(get_session)):
     res = await train_on_closed_trades(s)
     return {"updated": res}
+
+
+@router.patch("/policy/{underlying:path}/brackets")
+async def set_brackets(
+    underlying: str,
+    target_pct: float = Query(..., gt=0, lt=2.0),
+    stop_pct: float = Query(..., gt=0, lt=2.0),
+    min_conviction: float | None = Query(None, ge=0.0, le=0.9,
+        description="Optional — greedy-mode FLAT filter threshold"),
+    s: AsyncSession = Depends(get_session),
+):
+    """Update the policy's target / stop percentages and (optionally) the
+    live conviction filter."""
+    row = (await s.execute(select(RLPolicy).where(RLPolicy.underlying == underlying))).scalar_one_or_none()
+    if not row:
+        row = RLPolicy(underlying=underlying, weights="{}", epsilon=0.10, enabled=True,
+                       target_pct=target_pct, stop_pct=stop_pct,
+                       min_conviction=min_conviction or 0.0)
+        s.add(row)
+    else:
+        row.target_pct = target_pct
+        row.stop_pct = stop_pct
+        if min_conviction is not None:
+            row.min_conviction = min_conviction
+    await s.commit()
+    return {"ok": True, "underlying": underlying,
+            "target_pct": target_pct, "stop_pct": stop_pct,
+            "min_conviction": row.min_conviction}
+
+
+@router.post("/train-and-save")
+async def train_and_save(
+    underlying: str = Query(...),
+    total_days: int = Query(365, ge=30, le=365),
+    target_pct: float = Query(0.25, gt=0, lt=2),
+    stop_pct: float = Query(0.15, gt=0, lt=2),
+    min_conviction: float = Query(0.05, ge=0.0, le=0.9),
+    lr: float = Query(0.10, gt=0, lt=1),
+    epochs: int = Query(1, ge=1, le=20),
+    s: AsyncSession = Depends(get_session),
+):
+    """Train the policy on the full window (no test split — every day
+    contributes to weights), then persist brackets + conviction so live
+    inference uses this exact config. Use this as the 'go-live' switch."""
+    # Use train_test_underlying with test_days=2 so the test phase is
+    # tiny — we only care about the trained weights being saved.
+    result = await train_test_underlying(
+        s, underlying, total_days=total_days, test_days=2,
+        min_conviction=min_conviction,
+        target_pct_override=target_pct, stop_pct_override=stop_pct,
+        lr=lr, epochs=epochs, sequential=True,
+    )
+    # Persist the live-only config so inference uses these brackets / filter
+    row = (await s.execute(select(RLPolicy).where(RLPolicy.underlying == underlying))).scalar_one()
+    row.target_pct = target_pct
+    row.stop_pct = stop_pct
+    row.min_conviction = min_conviction
+    row.enabled = True
+    await s.commit()
+    roi = getattr(result, "roi", None)
+    return {
+        "ok": True, "underlying": underlying,
+        "train_window": result.train_window,
+        "train_trades": result.train_trades,
+        "train_win_rate": result.train_win_rate,
+        "saved": {"target_pct": target_pct, "stop_pct": stop_pct,
+                  "min_conviction": min_conviction, "lr": lr, "epochs": epochs},
+        "holdout_roi": roi,
+    }
+
+
+@router.post("/evaluate")
+async def evaluate(
+    symbols: list[str],
+    total_days: int = Query(30, ge=14, le=365),
+    test_days: int = Query(7, ge=2, le=60),
+    min_conviction: float = Query(0.0, ge=0.0, le=0.9,
+        description="Force FLAT unless winning prob exceeds FLAT prob by this margin"),
+    target_pct: float | None = Query(None, gt=0, lt=2,
+        description="Override the policy's TP %"),
+    stop_pct: float | None = Query(None, gt=0, lt=2,
+        description="Override the policy's SL %"),
+    lr: float | None = Query(None, gt=0, lt=1.0,
+        description="Override policy learning rate (default 0.05)"),
+    epochs: int = Query(1, ge=1, le=20,
+        description="Number of replay passes over the training window"),
+    starting_capital: float = Query(100_000, ge=10_000, le=10_000_000,
+        description="Starting INR capital for ROI sim"),
+    lot_size: int = Query(65, ge=1, le=10_000,
+        description="Lot size — NIFTY is 65"),
+    brokerage_per_trade: float = Query(50.0, ge=0.0, le=500.0,
+        description="Flat per-trade cost (brokerage + STT + GST proxy)"),
+    sequential: bool = Query(True,
+        description="Enforce one-trade-at-a-time (matches live)"),
+    s: AsyncSession = Depends(get_session),
+):
+    """Train/test split with optional knobs to A/B configurations.
+    When `sequential=true`, only one trade is open at any time and ROI
+    is computed against `starting_capital` × `lot_size` premium outlay."""
+    out = []
+    for sym in symbols:
+        r = await train_test_underlying(
+            s, sym, total_days=total_days, test_days=test_days,
+            min_conviction=min_conviction,
+            target_pct_override=target_pct, stop_pct_override=stop_pct,
+            lr=lr, epochs=epochs,
+            starting_capital=starting_capital, lot_size=lot_size,
+            brokerage_per_trade=brokerage_per_trade,
+            sequential=sequential,
+        )
+        out.append({
+            "underlying": r.underlying,
+            "train_window": r.train_window, "test_window": r.test_window,
+            "train_trades": r.train_trades, "train_win_rate": r.train_win_rate,
+            "train_cum_reward": r.train_cum_reward,
+            "test_trades": r.test_trades, "test_win_rate": r.test_win_rate,
+            "test_cum_reward": r.test_cum_reward,
+            "test_cum_pnl_pct": r.test_cum_pnl_pct,
+            "test_avg_pnl_per_trade_pct": r.test_avg_pnl_per_trade,
+            "roi": getattr(r, "roi", None),
+        })
+    return {"results": out, "config": {
+        "total_days": total_days, "test_days": test_days,
+        "min_conviction": min_conviction,
+        "target_pct": target_pct, "stop_pct": stop_pct,
+        "lr": lr, "epochs": epochs,
+        "starting_capital": starting_capital,
+        "lot_size": lot_size, "brokerage_per_trade": brokerage_per_trade,
+        "sequential": sequential,
+    }}
+
+
+@router.post("/tune")
+async def tune(
+    underlying: str = Query(...,
+        description="Single symbol to tune — keep small grids to respect Fyers rate limits"),
+    total_days: int = Query(180, ge=30, le=365),
+    test_days: int = Query(14, ge=5, le=60),
+    target_pct: float = Query(0.25, gt=0, lt=2),
+    stop_pct: float = Query(0.15, gt=0, lt=2),
+    min_conviction: float = Query(0.05, ge=0.0, le=0.9),
+    lrs: str = Query("0.01,0.025,0.05,0.10,0.20",
+        description="Comma-separated LR grid"),
+    epochs_grid: str = Query("1,2,4",
+        description="Comma-separated epoch grid"),
+    starting_capital: float = Query(100_000),
+    lot_size: int = Query(65),
+    brokerage_per_trade: float = Query(50.0),
+    s: AsyncSession = Depends(get_session),
+):
+    """LR × epochs grid search. Returns all results sorted by OOS ROI %
+    so you can see how the bandit responds to each setting."""
+    lr_list = [float(x) for x in lrs.split(",") if x.strip()]
+    ep_list = [int(x) for x in epochs_grid.split(",") if x.strip()]
+    grid = []
+    for lr in lr_list:
+        for ep in ep_list:
+            r = await train_test_underlying(
+                s, underlying, total_days=total_days, test_days=test_days,
+                min_conviction=min_conviction,
+                target_pct_override=target_pct, stop_pct_override=stop_pct,
+                lr=lr, epochs=ep,
+                starting_capital=starting_capital, lot_size=lot_size,
+                brokerage_per_trade=brokerage_per_trade,
+                sequential=True,
+            )
+            roi = getattr(r, "roi", {}) or {}
+            grid.append({
+                "lr": lr, "epochs": ep,
+                "train_trades": r.train_trades,
+                "test_trades": r.test_trades,
+                "test_win_rate": r.test_win_rate,
+                "roi_pct": roi.get("roi_pct"),
+                "max_dd_pct": roi.get("max_drawdown_pct"),
+                "pnl_inr": roi.get("pnl_inr"),
+                "trades_taken": roi.get("trades_taken"),
+            })
+    grid.sort(key=lambda r: (r["roi_pct"] is None, -(r["roi_pct"] or -1e9)))
+    return {"underlying": underlying, "grid": grid, "best": grid[0] if grid else None}
+
+
+@router.post("/backfill")
+async def backfill(
+    symbols: list[str],
+    days: int = Query(30, ge=1, le=180),
+    reset: bool = Query(False, description="Wipe existing policy weights before training"),
+    s: AsyncSession = Depends(get_session),
+):
+    """Pull historical 5-min candles for each symbol, simulate ATM CE/PE
+    trades via Black-Scholes pricing, and run the bandit update.
+    Useful for weekends / overnight bootstrapping."""
+    out = []
+    for sym in symbols:
+        stats = await backfill_underlying(s, sym, days=days, reset_policy=reset)
+        out.append({
+            "underlying": stats.underlying, "sessions": stats.sessions,
+            "trades": stats.trades, "wins": stats.wins, "losses": stats.losses,
+            "timeouts": stats.timeouts, "cum_reward": round(stats.cum_reward, 2),
+            "win_rate": round(stats.wins / stats.trades, 3) if stats.trades else None,
+        })
+    return {"backfilled": out}

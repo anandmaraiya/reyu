@@ -55,6 +55,34 @@ class Tick1m(Base):
     __table_args__ = (Index("ix_tick_1m_symbol_ts", "symbol", "ts"),)
 
 
+class OptionStrikeSnapshot(Base):
+    """Per-strike option-chain snapshot. Captures ATM ± 10 strikes per poll
+    so the RL feature extractor can use real OI / IV / premium history
+    rather than aggregate-only values from `option_snapshot`.
+
+    Volume guard: ~21 rows × 60s × 200 symbols ≈ 250k rows/day. Hypertable
+    chunking + 30-day retention keeps disk usage modest.
+    """
+    __tablename__ = "option_strike_snapshot"
+    ts = Column(DateTime, primary_key=True)
+    underlying = Column(String, primary_key=True)
+    strike = Column(Float, primary_key=True)
+    expiry = Column(DateTime, primary_key=True)
+    ce_oi = Column(BigInteger, default=0)
+    ce_oi_change = Column(BigInteger, default=0)
+    ce_volume = Column(BigInteger, default=0)
+    ce_ltp = Column(Float)
+    ce_iv = Column(Float)
+    pe_oi = Column(BigInteger, default=0)
+    pe_oi_change = Column(BigInteger, default=0)
+    pe_volume = Column(BigInteger, default=0)
+    pe_ltp = Column(Float)
+    pe_iv = Column(Float)
+    spot = Column(Float)
+
+    __table_args__ = (Index("ix_strike_snap_under_ts", "underlying", "ts"),)
+
+
 class OptionSnapshot(Base):
     """Per-underlying option-chain summary, sampled at fixed cadence."""
     __tablename__ = "option_snapshot"
@@ -111,9 +139,10 @@ class ApiKey(Base):
 
 # ── Reinforcement learning ──────────────────────────────────────
 class RLPolicy(Base):
-    """Per-underlying contextual-bandit policy. `weights` is JSON-encoded
-    {long: [...], short: [...], bias_long: f, bias_short: f, feature_mean, feature_std}.
-    The action 'FLAT' has implicit weights of zero (baseline)."""
+    """Per-underlying contextual-bandit policy. `weights` is JSON-encoded.
+    `target_pct` / `stop_pct` are the bracket sizes used at entry; the
+    reward function scales with their ratio so any 1:1 / 2:1 / asymmetric
+    setting works without code changes."""
     __tablename__ = "rl_policy"
     underlying = Column(String, primary_key=True)     # e.g. "NSE:NIFTY50-INDEX"
     weights = Column(String, nullable=False, default="{}")     # JSON blob
@@ -123,6 +152,9 @@ class RLPolicy(Base):
     last_trained_at = Column(DateTime, nullable=True)
     epsilon = Column(Float, default=0.10)
     enabled = Column(Boolean, default=True)
+    target_pct = Column(Float, default=0.20)          # TP at +20% on premium
+    stop_pct = Column(Float, default=0.20)            # SL at -20% on premium (1:1)
+    min_conviction = Column(Float, default=0.0)       # greedy-mode FLAT filter; tuned per symbol
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -181,6 +213,23 @@ async def init_db() -> None:
                 PRIMARY KEY (ts, symbol)
             )
         """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS option_strike_snapshot (
+                ts TIMESTAMP NOT NULL,
+                underlying VARCHAR NOT NULL,
+                strike FLOAT NOT NULL,
+                expiry TIMESTAMP NOT NULL,
+                ce_oi BIGINT DEFAULT 0, ce_oi_change BIGINT DEFAULT 0,
+                ce_volume BIGINT DEFAULT 0, ce_ltp FLOAT, ce_iv FLOAT,
+                pe_oi BIGINT DEFAULT 0, pe_oi_change BIGINT DEFAULT 0,
+                pe_volume BIGINT DEFAULT 0, pe_ltp FLOAT, pe_iv FLOAT,
+                spot FLOAT,
+                PRIMARY KEY (ts, underlying, strike, expiry)
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_strike_snap_under_ts ON option_strike_snapshot (underlying, ts)"
+        ))
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS option_snapshot (
                 ts TIMESTAMP NOT NULL,
@@ -247,9 +296,20 @@ async def init_db() -> None:
                 last_trained_at TIMESTAMP,
                 epsilon FLOAT DEFAULT 0.10,
                 enabled BOOLEAN DEFAULT TRUE,
+                target_pct FLOAT DEFAULT 0.20,
+                stop_pct FLOAT DEFAULT 0.20,
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         """))
+        await conn.execute(text(
+            "ALTER TABLE rl_policy ADD COLUMN IF NOT EXISTS target_pct FLOAT DEFAULT 0.20"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE rl_policy ADD COLUMN IF NOT EXISTS stop_pct FLOAT DEFAULT 0.20"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE rl_policy ADD COLUMN IF NOT EXISTS min_conviction FLOAT DEFAULT 0.0"
+        ))
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS rl_trade (
                 id VARCHAR PRIMARY KEY,
@@ -277,6 +337,7 @@ async def init_db() -> None:
             "CREATE EXTENSION IF NOT EXISTS timescaledb",
             "SELECT create_hypertable('tick_1m', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
             "SELECT create_hypertable('option_snapshot', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
+            "SELECT create_hypertable('option_strike_snapshot', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
             "CREATE INDEX IF NOT EXISTS ix_api_keys_user ON api_keys (user_id)",
             "CREATE INDEX IF NOT EXISTS ix_api_keys_hash ON api_keys (key_hash)",
             "CREATE INDEX IF NOT EXISTS ix_rl_trade_under_ts ON rl_trade (underlying, entry_ts DESC)",

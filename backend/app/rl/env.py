@@ -2,11 +2,14 @@
 
 Open: pick the ATM strike of the matching option side (CE for LONG, PE for
 SHORT — i.e. we BUY a directional option either way) and record entry
-premium. Target = entry × 1.10, Stop = entry × 0.95.
+premium. Bracket size comes from the per-policy `target_pct`/`stop_pct`
+(default 20% / 20%, 1:1 R/R).
 
 Close: a separate sweeper polls open trades every minute. On a TP/SL hit
-it books the reward (+1 / -0.5). At session close any still-OPEN trade is
-booked at the current premium with reward 0 and status TIMEOUT.
+it books the reward via `reward_for()` which scales with the bracket
+asymmetry (winners +1, losers `-(stop/target)`). At session close any
+still-OPEN trade is booked at the current premium with a partial reward
+proportional to its realised P&L.
 
 `enter_trade` is paper-only by default. Setting `paper=False` would route
 the buy through `fy.place_order` but we KEEP this disabled in code paths
@@ -23,18 +26,35 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import RLTrade, OptionSnapshot
+from app.db import RLTrade, RLPolicy, OptionSnapshot
 from app.fyers import client as fy
 from app.analytics.chain import normalize_chain
 
 log = logging.getLogger("reyu.rl.env")
 IST = timezone(timedelta(hours=5, minutes=30))
 
-TP_MULTIPLIER = 1.10
-SL_MULTIPLIER = 0.95
-REWARD_TP = 1.0
-REWARD_SL = -0.5         # 2:1 R/R asymmetry — winners reward twice as much as losers cost
-REWARD_TIMEOUT = 0.0
+DEFAULT_TARGET_PCT = 0.20
+DEFAULT_STOP_PCT = 0.20
+
+
+def reward_for(status: str, pnl_pct: float | None,
+               target_pct: float, stop_pct: float) -> float:
+    """Reward shape that scales with bracket asymmetry.
+
+    TP hit       → +1.0
+    SL hit       → -(stop_pct / target_pct)
+                   (1:1 R/R → -1, 2:1 R/R → -0.5, 1:2 R/R → -2)
+    TIMEOUT      → clamp(pnl_pct / target_pct, -1, +1)
+                   gives a graded signal even from unfilled brackets
+    """
+    if status == "TP":
+        return 1.0
+    if status == "SL":
+        return -(stop_pct / max(target_pct, 1e-6))
+    if status == "TIMEOUT" and pnl_pct is not None:
+        scaled = (pnl_pct / 100.0) / max(target_pct, 1e-6)
+        return max(-1.0, min(1.0, scaled))
+    return 0.0
 
 
 def _pick_atm_leg(chain: dict, side: str) -> dict | None:
@@ -72,6 +92,14 @@ async def enter_trade(
     leg = _pick_atm_leg(chain, side)
     if not leg:
         return None
+
+    # Pull per-policy bracket sizes (configurable, default 20/20)
+    pol_row = (await s.execute(
+        select(RLPolicy).where(RLPolicy.underlying == underlying)
+    )).scalar_one_or_none()
+    target_pct = (pol_row.target_pct if pol_row and pol_row.target_pct else DEFAULT_TARGET_PCT)
+    stop_pct = (pol_row.stop_pct if pol_row and pol_row.stop_pct else DEFAULT_STOP_PCT)
+
     entry = leg["ltp"]
     trade = RLTrade(
         id=str(uuid.uuid4()),
@@ -82,8 +110,8 @@ async def enter_trade(
         option_type=side,
         qty=qty,
         entry_premium=entry,
-        target_premium=round(entry * TP_MULTIPLIER, 2),
-        stop_premium=round(entry * SL_MULTIPLIER, 2),
+        target_premium=round(entry * (1.0 + target_pct), 2),
+        stop_premium=round(entry * (1.0 - stop_pct), 2),
         features=json.dumps(features),
         paper=paper,
         action_logprob=action_logprob,
@@ -121,19 +149,22 @@ async def sweep_open_trades(s: AsyncSession) -> dict[str, int]:
             continue
         if ltp <= 0:
             continue
+        # Derive each trade's TP/SL pct from its stored prices (so historical
+        # trades opened before the policy's brackets changed still book
+        # rewards consistent with their own bracket asymmetry)
         for t in ts_for_sym:
-            status = None; reward = None
+            status = None
+            target_pct = (t.target_premium / t.entry_premium - 1.0) if t.entry_premium else DEFAULT_TARGET_PCT
+            stop_pct = (1.0 - t.stop_premium / t.entry_premium) if t.entry_premium else DEFAULT_STOP_PCT
+            pnl_pct = (ltp / t.entry_premium - 1.0) * 100 if t.entry_premium else 0.0
             if ltp >= t.target_premium:
-                status, reward = "TP", REWARD_TP
-                tp += 1
+                status = "TP"; tp += 1
             elif ltp <= t.stop_premium:
-                status, reward = "SL", REWARD_SL
-                sl += 1
+                status = "SL"; sl += 1
             elif is_after_close:
-                status, reward = "TIMEOUT", REWARD_TIMEOUT
-                tout += 1
+                status = "TIMEOUT"; tout += 1
             if status:
-                pnl_pct = (ltp / t.entry_premium - 1.0) * 100
+                reward = reward_for(status, pnl_pct, target_pct, stop_pct)
                 await s.execute(
                     update(RLTrade).where(RLTrade.id == t.id).values(
                         status=status, exit_ts=datetime.utcnow(),

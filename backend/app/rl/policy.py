@@ -63,6 +63,22 @@ class Policy:
         d = json.loads(s)
         d.setdefault("mu", [0.0] * FEATURE_DIM)
         d.setdefault("sigma", [1.0] * FEATURE_DIM)
+        # ── Defensive dim repair ─────────────────────────────────
+        # FEATURE_DIM grows when we add features. Old persisted
+        # weights / normalisation vectors are shorter; pad with
+        # zeros (weights) or neutrals (mu=0, sigma=1) so the policy
+        # keeps working and starts learning the new dims online.
+        # Truncate if the persisted vector is somehow longer.
+        def _resize(v: list[float], target: int, fill: float) -> list[float]:
+            if len(v) == target:
+                return v
+            if len(v) > target:
+                return v[:target]
+            return v + [fill] * (target - len(v))
+        d["w_long"] = _resize(d.get("w_long") or [], FEATURE_DIM, 0.0)
+        d["w_short"] = _resize(d.get("w_short") or [], FEATURE_DIM, 0.0)
+        d["mu"] = _resize(d["mu"], FEATURE_DIM, 0.0)
+        d["sigma"] = _resize(d["sigma"], FEATURE_DIM, 1.0)
         return cls(**d)
 
     # ── normalisation ──────────────────────────────────────────
@@ -92,11 +108,19 @@ class Policy:
         z = sum(exps)
         return [e / z for e in exps]
 
-    def act(self, x: list[float], epsilon: float) -> tuple[int, float, list[float]]:
-        """Returns (action_idx, log π(a|x), probs)."""
+    def act(self, x: list[float], epsilon: float,
+            min_conviction: float = 0.0) -> tuple[int, float, list[float]]:
+        """Returns (action_idx, log π(a|x), probs).
+
+        `min_conviction` ∈ [0, 1] forces FLAT when the winning directional
+        action's probability minus FLAT's probability is below the
+        threshold. Critical at 1:1 R/R where you need real edge — and
+        useful even at asymmetric brackets to skip the low-conviction tail.
+        """
         sc = self.scores(x)
         probs = self._softmax(sc)
-        if random.random() < epsilon:
+        exploring = random.random() < epsilon
+        if exploring:
             a = random.randrange(N_ACTIONS)
         else:
             r = random.random()
@@ -106,29 +130,37 @@ class Policy:
                 if r <= cum:
                     a = i
                     break
+        # Conviction filter — exploitation only. We want exploration to
+        # still generate data; gating it would freeze a randomly-initialised
+        # policy at FLAT forever (uniform softmax never beats the threshold).
+        if not exploring and min_conviction > 0 and a in (0, 1):
+            if probs[a] - probs[2] < min_conviction:
+                a = 2  # force FLAT
         return a, math.log(max(probs[a], 1e-9)), probs
 
     # ── learning ───────────────────────────────────────────────
-    def update(self, x: list[float], action: int, reward: float) -> dict:
-        """Single-trade REINFORCE update with EWMA baseline."""
+    def update(self, x: list[float], action: int, reward: float,
+               lr: float | None = None) -> dict:
+        """Single-trade REINFORCE update with EWMA baseline.
+        `lr` overrides the module default — used by the hyperparameter
+        tuner so we can A/B different rates without mutating the constant."""
+        rate = LR if lr is None else lr
         self.n_updates += 1
         self.update_running_stats(x)
         xn = self.normalise(x)
         probs = self._softmax(self.scores(x))
         advantage = reward - self.baseline
-        # one-hot - probs (∇ log π for softmax)
         for a in range(N_ACTIONS):
             grad_coef = (1.0 if a == action else 0.0) - probs[a]
             if a == 0:        # LONG
                 for i in range(FEATURE_DIM):
-                    self.w_long[i] += LR * advantage * grad_coef * xn[i]
-                self.b_long += LR * advantage * grad_coef
+                    self.w_long[i] += rate * advantage * grad_coef * xn[i]
+                self.b_long += rate * advantage * grad_coef
             elif a == 1:      # SHORT
                 for i in range(FEATURE_DIM):
-                    self.w_short[i] += LR * advantage * grad_coef * xn[i]
-                self.b_short += LR * advantage * grad_coef
+                    self.w_short[i] += rate * advantage * grad_coef * xn[i]
+                self.b_short += rate * advantage * grad_coef
             # FLAT has no weights to update — it's the baseline
-        # EWMA baseline update
         self.baseline += BASELINE_ALPHA * (reward - self.baseline)
         return {"advantage": advantage, "baseline": self.baseline, "probs": probs}
 
