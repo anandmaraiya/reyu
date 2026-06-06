@@ -175,13 +175,45 @@ async def poll_all() -> None:
     await poll_low()
 
 
+async def rl_decide_cycle() -> None:
+    """5-minute inference cycle — runs decisions across tier-1 universe."""
+    from app.rl.inference import decide_universe
+    try:
+        results = await decide_universe()
+    except Exception as e:
+        log.exception("RL decide cycle failed: %s", e)
+        return
+    opened = sum(1 for r in results if r.get("trade_id"))
+    log.info("RL decide cycle: %d symbols scanned, %d trades opened", len(results), opened)
+
+
+async def rl_sweep_cycle() -> None:
+    """1-minute sweep — close TP/SL hits on open RL trades + nightly train."""
+    from app.rl.env import sweep_open_trades
+    from app.rl.trainer import train_on_closed_trades
+    async with SessionLocal() as s:
+        try:
+            res = await sweep_open_trades(s)
+            if res["tp"] + res["sl"] + res["timeout"] > 0:
+                log.info("RL sweep: %s", res)
+                # Train immediately on freshly closed trades
+                await train_on_closed_trades(s)
+        except Exception as e:
+            log.exception("RL sweep failed: %s", e)
+
+
 def start() -> None:
     scheduler.add_job(poll_high, "interval", seconds=settings.snapshot_interval_sec,
                       id="poll_high", max_instances=1, coalesce=True)
     scheduler.add_job(poll_low, "interval", seconds=max(settings.snapshot_interval_sec * 5, 300),
                       id="poll_low", max_instances=1, coalesce=True)
+    # RL cycles — 5-minute decisions, 1-minute bracket sweep
+    scheduler.add_job(rl_decide_cycle, "interval", seconds=300,
+                      id="rl_decide", max_instances=1, coalesce=True)
+    scheduler.add_job(rl_sweep_cycle, "interval", seconds=60,
+                      id="rl_sweep", max_instances=1, coalesce=True)
     scheduler.start()
-    log.info("scheduler started — high every %ds, low every %ds",
+    log.info("scheduler started — high every %ds, low every %ds, RL decide 300s, RL sweep 60s",
              settings.snapshot_interval_sec, max(settings.snapshot_interval_sec * 5, 300))
 
 

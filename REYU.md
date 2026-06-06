@@ -267,3 +267,56 @@ reyu/
 | Backtest "no data" | Need ≥1 session of snapshots; check `/api/admin/universe` (algo tier) |
 | Chat says "LLM not configured" | Set `OPENROUTER_API_KEY` — falls back to regex router otherwise |
 | Telegram silent | `TELEGRAM_BOT_TOKEN` set? Webhook registered? |
+
+---
+
+## 14 · Reinforcement-learning trading engine (T8)
+
+A per-underlying **contextual bandit** sits on top of the snapshot history and
+makes live trade decisions every 5 minutes. Paper-trade by default; the same
+code path can be flipped to live by setting `paper=False` on the `enter_trade`
+call (only the API allows this and gates by Pro/Algo tier).
+
+### Architecture
+```
+app/rl/
+├── features.py    18-dim state vector per (underlying, tick)
+├── policy.py      Linear softmax policy (LONG/SHORT/FLAT) + ε-greedy + REINFORCE update
+├── env.py         Paper-trade environment — opens ATM CE/PE, brackets at TP +10% / SL -5%
+├── trainer.py     Batch update on closed trades
+└── inference.py   Universe-scan + per-underlying decide
+
+DB tables: rl_policy (per-underlying weights), rl_trade (every paper trade)
+```
+
+### Scheduler jobs
+- `rl_decide_cycle` — every **5 min**, runs inference across tier-1 universe and opens trades
+- `rl_sweep_cycle` — every **1 min**, checks open trades for TP/SL hits and triggers `train_on_closed_trades`
+
+### Reward shaping
+| Outcome | Reward | Why |
+|---|---|---|
+| TP hit (+10% premium) | **+1.0** | full win |
+| SL hit (-5% premium) | **-0.5** | 2:1 R/R asymmetry — winners reward twice as much as losers cost |
+| Session timeout | **0** | neutral, but the trade is still booked at exit_premium for P&L tracking |
+
+### Feature vector (18 dims)
+spot_change_today_pct · spot_change_5m_pct · spot_change_30m_pct · pcr_oi · pcr_oi_change_5m · pcr_oi_change_30m · pcr_oi_vs_prev_close · ce_oi_delta_5m_norm · pe_oi_delta_5m_norm · ce_pe_oi_imbalance · atm_iv · atm_iv_change_30m · iv_skew_put_minus_call · max_pain_distance_pct · max_pain_drift_today · session_progress · bias_score_norm · snapshots_count_today
+
+### API
+| Endpoint | Purpose |
+|---|---|
+| `GET  /api/rl/summary` | Universe-wide health (policies, open trades, today's reward) |
+| `GET  /api/rl/policies` | List all policies sorted by trade count |
+| `GET  /api/rl/policy/{underlying}` | Full weights + feature names + per-feature mean/std |
+| `POST /api/rl/policy/{underlying}/reset` | Wipe weights + counters |
+| `POST /api/rl/policy/{underlying}/toggle?on=` | Disable/re-enable inference |
+| `GET  /api/rl/recommendations?top=20&min_conviction=0.1` | Strongest live signals (read-only) |
+| `GET  /api/rl/trades?status=OPEN\|TP\|SL\|TIMEOUT` | Paper-trade history |
+| `POST /api/rl/decide-now` | Force one inference cycle (debug) |
+| `POST /api/rl/train` | Trigger trainer manually |
+
+### Data-quality dependencies
+- Needs **option_snapshot** rows for the underlying — the scheduler populates these every 60s (tier-1) or 5min (tier-2)
+- The feature extractor degrades gracefully when prev-day / 30m-back data is missing (falls back to current values)
+- Real per-strike OI/IV history (currently aggregate per underlying) is the main upgrade for future-proofing spread-style RL — see TASKS.md

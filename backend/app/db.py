@@ -109,6 +109,48 @@ class ApiKey(Base):
     last_used_at = Column(DateTime, nullable=True)
 
 
+# ── Reinforcement learning ──────────────────────────────────────
+class RLPolicy(Base):
+    """Per-underlying contextual-bandit policy. `weights` is JSON-encoded
+    {long: [...], short: [...], bias_long: f, bias_short: f, feature_mean, feature_std}.
+    The action 'FLAT' has implicit weights of zero (baseline)."""
+    __tablename__ = "rl_policy"
+    underlying = Column(String, primary_key=True)     # e.g. "NSE:NIFTY50-INDEX"
+    weights = Column(String, nullable=False, default="{}")     # JSON blob
+    n_trades = Column(Integer, default=0)
+    n_wins = Column(Integer, default=0)
+    cum_reward = Column(Float, default=0.0)
+    last_trained_at = Column(DateTime, nullable=True)
+    epsilon = Column(Float, default=0.10)
+    enabled = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class RLTrade(Base):
+    """One paper-trade run. `features` is JSON-encoded snapshot at entry.
+    `status` ∈ OPEN | TP | SL | TIMEOUT. Reward computed on close."""
+    __tablename__ = "rl_trade"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    underlying = Column(String, nullable=False, index=True)
+    leg_symbol = Column(String, nullable=False)
+    action = Column(String, nullable=False)               # LONG | SHORT
+    strike = Column(Float)
+    option_type = Column(String)                          # CE | PE
+    qty = Column(Integer, default=1)
+    entry_ts = Column(DateTime, default=datetime.utcnow, index=True)
+    entry_premium = Column(Float, nullable=False)
+    target_premium = Column(Float, nullable=False)
+    stop_premium = Column(Float, nullable=False)
+    exit_ts = Column(DateTime, nullable=True)
+    exit_premium = Column(Float, nullable=True)
+    status = Column(String, default="OPEN", index=True)   # OPEN | TP | SL | TIMEOUT
+    reward = Column(Float, nullable=True)                 # +1 TP, -0.5 SL, 0 timeout
+    pnl_pct = Column(Float, nullable=True)
+    features = Column(String, default="{}")               # JSON state vector
+    paper = Column(Boolean, default=True)                 # False ⇒ real Fyers order
+    action_logprob = Column(Float, nullable=True)         # for policy gradient
+
+
 async def init_db() -> None:
     """Create tables + promote time-series tables to Timescale hypertables."""
     async with engine.begin() as conn:
@@ -195,12 +237,50 @@ async def init_db() -> None:
                 last_used_at TIMESTAMP
             )
         """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS rl_policy (
+                underlying VARCHAR PRIMARY KEY,
+                weights TEXT NOT NULL DEFAULT '{}',
+                n_trades INTEGER DEFAULT 0,
+                n_wins INTEGER DEFAULT 0,
+                cum_reward FLOAT DEFAULT 0.0,
+                last_trained_at TIMESTAMP,
+                epsilon FLOAT DEFAULT 0.10,
+                enabled BOOLEAN DEFAULT TRUE,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS rl_trade (
+                id VARCHAR PRIMARY KEY,
+                underlying VARCHAR NOT NULL,
+                leg_symbol VARCHAR NOT NULL,
+                action VARCHAR NOT NULL,
+                strike FLOAT,
+                option_type VARCHAR,
+                qty INTEGER DEFAULT 1,
+                entry_ts TIMESTAMP DEFAULT NOW(),
+                entry_premium FLOAT NOT NULL,
+                target_premium FLOAT NOT NULL,
+                stop_premium FLOAT NOT NULL,
+                exit_ts TIMESTAMP,
+                exit_premium FLOAT,
+                status VARCHAR DEFAULT 'OPEN',
+                reward FLOAT,
+                pnl_pct FLOAT,
+                features TEXT DEFAULT '{}',
+                paper BOOLEAN DEFAULT TRUE,
+                action_logprob FLOAT
+            )
+        """))
         for stmt in (
             "CREATE EXTENSION IF NOT EXISTS timescaledb",
             "SELECT create_hypertable('tick_1m', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
             "SELECT create_hypertable('option_snapshot', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
             "CREATE INDEX IF NOT EXISTS ix_api_keys_user ON api_keys (user_id)",
             "CREATE INDEX IF NOT EXISTS ix_api_keys_hash ON api_keys (key_hash)",
+            "CREATE INDEX IF NOT EXISTS ix_rl_trade_under_ts ON rl_trade (underlying, entry_ts DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_rl_trade_status ON rl_trade (status)",
         ):
             try:
                 await conn.execute(text(stmt))
