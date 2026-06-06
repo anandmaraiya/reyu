@@ -142,6 +142,7 @@ app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
 app.include_router(data_api.router, prefix="/api/data", tags=["data-api"])
 app.include_router(webhook_subs.router, prefix="/api/webhooks", tags=["webhooks"])
 app.include_router(backtest.router, prefix="/api/backtest", tags=["backtest"])
+app.include_router(rl.router, prefix="/api/rl", tags=["rl"])
 
 
 @app.get("/api/health")
