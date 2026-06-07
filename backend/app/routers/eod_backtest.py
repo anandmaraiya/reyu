@@ -9,6 +9,7 @@ from app.sim.eod_engine import (
     simulate_eod, trades_to_roi_dicts, EodDecision,
 )
 from app.sim.engine import compute_roi
+from app.sim.eod_bandit import train_test_eod_bandit
 
 router = APIRouter()
 
@@ -55,6 +56,40 @@ _DECIDERS = {
 
 
 # ── Endpoint ───────────────────────────────────────────────────────
+@router.post("/bandit-train-test")
+async def bandit_train_test(
+    underlying: str = Query("NSE:NIFTY50-INDEX"),
+    train_start: date = Query(...),
+    train_end: date = Query(...),
+    test_start: date = Query(...),
+    test_end: date = Query(...),
+    target_pct: float = Query(0.25, gt=0, lt=2),
+    stop_pct: float = Query(0.15, gt=0, lt=2),
+    max_hold_days: int = Query(5, ge=1, le=30),
+    only_dte_le: int = Query(14, ge=1, le=60),
+    epsilon: float = Query(0.10, ge=0, le=0.5),
+    lr: float = Query(0.10, gt=0, lt=1),
+    epochs: int = Query(1, ge=1, le=20),
+    min_conviction: float = Query(0.0, ge=0.0, le=0.9),
+    starting_capital: float = Query(100_000, ge=10_000),
+    lot_size: int = Query(65, ge=1),
+    seed: int | None = Query(None),
+):
+    """Train an EOD contextual bandit on Bhavcopy data, then evaluate
+    read-only on the holdout. Returns metrics + fitted weights."""
+    return await train_test_eod_bandit(
+        underlying,
+        train_start=train_start, train_end=train_end,
+        test_start=test_start, test_end=test_end,
+        target_pct=target_pct, stop_pct=stop_pct,
+        max_hold_days=max_hold_days, only_dte_le=only_dte_le,
+        epsilon=epsilon, lr=lr, epochs=epochs,
+        min_conviction=min_conviction,
+        starting_capital=starting_capital, lot_size=lot_size,
+        seed=seed,
+    )
+
+
 @router.post("/eod")
 async def run_eod_backtest(
     underlying: str = Query("NSE:NIFTY50-INDEX"),

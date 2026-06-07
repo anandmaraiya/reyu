@@ -83,6 +83,31 @@ class OptionStrikeSnapshot(Base):
     __table_args__ = (Index("ix_strike_snap_under_ts", "underlying", "ts"),)
 
 
+class OptionContract1m(Base):
+    """Per-contract 1-min OHLCV+OI history. Mirrors `tick_1m` but for option
+    legs. Populated by the Fyers history endpoint (~100 days back at 1-min
+    resolution per contract). Powers truly real RL/strategy backtests —
+    replaces the BS-pricing fallback for any (date, strike) we have."""
+    __tablename__ = "option_contract_1m"
+    ts = Column(DateTime, primary_key=True)
+    symbol = Column(String, primary_key=True)        # e.g. NSE:NIFTY2660923000CE
+    underlying = Column(String, nullable=False)
+    strike = Column(Float, nullable=False)
+    expiry = Column(DateTime, nullable=False)
+    option_type = Column(String, nullable=False)     # CE | PE
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(BigInteger, default=0)
+    oi = Column(BigInteger, default=0)
+
+    __table_args__ = (
+        Index("ix_opt_contract_under_ts", "underlying", "ts"),
+        Index("ix_opt_contract_under_exp_strike", "underlying", "expiry", "strike", "option_type", "ts"),
+    )
+
+
 class OptionSnapshot(Base):
     """Per-underlying option-chain summary, sampled at fixed cadence."""
     __tablename__ = "option_snapshot"
@@ -494,6 +519,20 @@ async def init_db() -> None:
             )
         """))
         await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS option_contract_1m (
+                ts TIMESTAMP NOT NULL,
+                symbol VARCHAR NOT NULL,
+                underlying VARCHAR NOT NULL,
+                strike FLOAT NOT NULL,
+                expiry TIMESTAMP NOT NULL,
+                option_type VARCHAR NOT NULL,
+                open FLOAT, high FLOAT, low FLOAT, close FLOAT,
+                volume BIGINT DEFAULT 0,
+                oi BIGINT DEFAULT 0,
+                PRIMARY KEY (ts, symbol)
+            )
+        """))
+        await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS option_eod (
                 trade_date TIMESTAMP NOT NULL,
                 underlying VARCHAR NOT NULL,
@@ -514,6 +553,9 @@ async def init_db() -> None:
             "SELECT create_hypertable('option_snapshot', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
             "SELECT create_hypertable('option_strike_snapshot', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
             "SELECT create_hypertable('option_eod', 'trade_date', if_not_exists => TRUE, migrate_data => TRUE, chunk_time_interval => INTERVAL '90 days')",
+            "SELECT create_hypertable('option_contract_1m', 'ts', if_not_exists => TRUE, migrate_data => TRUE, chunk_time_interval => INTERVAL '7 days')",
+            "CREATE INDEX IF NOT EXISTS ix_opt_contract_under_ts ON option_contract_1m (underlying, ts)",
+            "CREATE INDEX IF NOT EXISTS ix_opt_contract_lookup ON option_contract_1m (underlying, expiry, strike, option_type, ts)",
             "CREATE INDEX IF NOT EXISTS ix_api_keys_user ON api_keys (user_id)",
             "CREATE INDEX IF NOT EXISTS ix_api_keys_hash ON api_keys (key_hash)",
             "CREATE INDEX IF NOT EXISTS ix_rl_trade_under_ts ON rl_trade (underlying, entry_ts DESC)",

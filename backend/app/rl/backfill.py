@@ -318,9 +318,13 @@ def _seq_simulate_session(
     lr: float | None = None,
     weight_decay: float = 0.0,
     seed: int | None = None,
+    pricer=None,                          # optional real-data pricer
 ) -> list[dict]:
     """RL-side decider: in train mode uses ε-greedy + on_close hook
-    to call Policy.update(); in test mode is greedy + conviction filter."""
+    to call Policy.update(); in test mode is greedy + conviction filter.
+
+    `pricer` defaults to BS via the engine. Pass a `RealPricerCache.price`
+    bound method to use real OptionContract1m data with BS fallback."""
 
     def decide(features: list[float], idx: int, ctx: dict) -> _Decision:
         if train:
@@ -342,13 +346,15 @@ def _seq_simulate_session(
             pol.update(features, trade.entry_signal["action_idx"],
                        trade.reward, lr=lr, weight_decay=weight_decay)
 
-    sim_trades = _engine_simulate_session(
-        candles_5m,
+    sim_kwargs = dict(
         decide=decide, target_pct=target_pct, stop_pct=stop_pct,
         underlying=underlying,
         feature_extractor=lambda c, i: _backfill_features(c[:i + 1], None, i / len(c)),
         on_close=on_close, seed=seed,
     )
+    if pricer is not None:
+        sim_kwargs["pricer"] = pricer
+    sim_trades = _engine_simulate_session(candles_5m, **sim_kwargs)
     # Preserve old dict-shaped contract for callers in train_test_underlying
     return [{
         "entry_idx": t.entry_idx, "exit_idx": t.exit_idx,
@@ -489,6 +495,7 @@ async def train_test_underlying(
     brokerage_per_trade: float = 50.0,
     sequential: bool = True,
     weight_decay: float = 0.0,
+    use_real_pricer: bool = False,
 ) -> TrainTestResult:
     """End-to-end evaluation:
         1. Wipe the policy.
@@ -545,17 +552,42 @@ async def train_test_underlying(
         if len(candles) >= 10:
             test_sessions.append(candles)
 
+    # ── Real-pricer cache builder (lazy: only when use_real_pricer) ─
+    pricer_coverage = {"real_hits": 0, "bs_fallbacks": 0}
+
+    async def _maybe_build_pricer(candles):
+        if not use_real_pricer:
+            return None
+        from app.sim.real_pricer import build_session_cache
+        from app.rl.calendar import iter_trading_days
+        if not candles:
+            return None
+        # The bandit assumes ~3-DTE weekly: derive expiry as the next
+        # Thursday from the session date.
+        sess_date = datetime.utcfromtimestamp(candles[0][0]).date()
+        d = sess_date
+        while d.weekday() != 3:
+            d += timedelta(days=1)
+        expiry_dt = datetime.combine(d, datetime.min.time())
+        cache = await build_session_cache(underlying, expiry_dt, candles)
+        return cache
+
     # ── TRAIN (N epochs over the same data so a low LR converges) ──
     train_trades_all: list[dict] = []
     for ep in range(epochs):
         ep_trades: list[dict] = []
         for candles in train_sessions:
+            cache = await _maybe_build_pricer(candles)
+            session_pricer = cache.price if cache else None
             if sequential:
                 tr = _seq_simulate_session(
                     candles, pol, target_pct, stop_pct, eps, underlying,
                     min_conviction=min_conviction, train=True, lr=lr,
-                    weight_decay=weight_decay,
+                    weight_decay=weight_decay, pricer=session_pricer,
                 )
+                if cache:
+                    pricer_coverage["real_hits"] += cache.real_hits
+                    pricer_coverage["bs_fallbacks"] += cache.bs_fallbacks
             else:
                 tr, _w, _l, _to, _r = await _simulate_session(
                     candles, pol, target_pct, stop_pct, eps, underlying,
@@ -579,11 +611,17 @@ async def train_test_underlying(
     # ── TEST (greedy, no updates, sequential to match live) ───────
     test_trades_all: list[dict] = []
     for candles in test_sessions:
+        cache = await _maybe_build_pricer(candles)
+        session_pricer = cache.price if cache else None
         if sequential:
             tr = _seq_simulate_session(
                 candles, pol, target_pct, stop_pct, 0.0, underlying,
                 min_conviction=min_conviction, train=False,
+                pricer=session_pricer,
             )
+            if cache:
+                pricer_coverage["real_hits"] += cache.real_hits
+                pricer_coverage["bs_fallbacks"] += cache.bs_fallbacks
         else:
             tr, _w, _l, _to, _r = await _simulate_session(
                 candles, pol, target_pct, stop_pct, 0.0, underlying,
@@ -620,4 +658,14 @@ async def train_test_underlying(
     setattr(result, "roi", roi)
     setattr(result, "lr", lr if lr is not None else 0.05)
     setattr(result, "epochs", epochs)
+    if use_real_pricer:
+        total_calls = pricer_coverage["real_hits"] + pricer_coverage["bs_fallbacks"]
+        setattr(result, "pricer_coverage", {
+            "real_pct": round(pricer_coverage["real_hits"] / total_calls * 100, 2)
+                        if total_calls else 0,
+            "bs_pct": round(pricer_coverage["bs_fallbacks"] / total_calls * 100, 2)
+                       if total_calls else 0,
+            "total_calls": total_calls,
+            **pricer_coverage,
+        })
     return result

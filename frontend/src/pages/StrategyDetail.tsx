@@ -1,0 +1,745 @@
+import { useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+  ReferenceLine,
+} from 'recharts'
+import { api } from '../api'
+import { useToast } from '../toast'
+import { chartTooltipStyles } from '../chartTheme'
+
+const num = (n: any, d = 2) =>
+  n == null ? '—' : Number(n).toLocaleString('en-IN', { maximumFractionDigits: d })
+
+type Strategy = {
+  id: string
+  version: number
+  name: string
+  description: string | null
+  kind: string
+  status: string
+  tier_required: string
+  spec: any
+  tags: string[]
+  created_at: string
+}
+
+type Run = {
+  id: string
+  strategy_id: string
+  strategy_version: number
+  mode: string
+  status: string
+  started_at: string
+  ended_at: string | null
+  metrics: any
+  equity_curve: { ts: number | null; equity: number }[]
+  data_quality: any
+  params: any
+  error_message: string | null
+}
+
+type Trade = {
+  id: string
+  entry_ts: string
+  exit_ts: string | null
+  entry_signal: any
+  exit_reason: string
+  legs: any[]
+  gross_pnl_inr: number | null
+  net_pnl_inr: number | null
+  pnl_pct: number | null
+  mae_pct: number | null
+  mfe_pct: number | null
+}
+
+type Tab = 'recipe' | 'performance' | 'runs' | 'trades'
+
+export default function StrategyDetail() {
+  const { id = '' } = useParams()
+  const nav = useNavigate()
+  const qc = useQueryClient()
+  const toast = useToast()
+  const [tab, setTab] = useState<Tab>('recipe')
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+
+  const { data: strat } = useQuery<Strategy>({
+    queryKey: ['strategy', id],
+    queryFn: async () => (await api.get(`/api/strategies/${id}`)).data,
+  })
+
+  const { data: runsList, refetch: refetchRuns } = useQuery<Run[]>({
+    queryKey: ['runs', id],
+    queryFn: async () =>
+      (await api.get(`/api/strategies/${id}/runs?limit=50`)).data,
+    refetchInterval: 5000,
+  })
+
+  // auto-select most recent run when list arrives
+  if (runsList && runsList.length && !selectedRunId) {
+    setSelectedRunId(runsList[0].id)
+  }
+
+  const { data: selRun } = useQuery<Run>({
+    queryKey: ['run', selectedRunId],
+    queryFn: async () =>
+      (await api.get(`/api/strategies/runs/${selectedRunId}`)).data,
+    enabled: !!selectedRunId,
+    refetchInterval: (q) =>
+      q.state.data?.status === 'RUNNING' ? 3000 : false,
+  })
+
+  const { data: trades } = useQuery<{ count: number; items: Trade[] }>({
+    queryKey: ['trades', selectedRunId],
+    queryFn: async () =>
+      (
+        await api.get(
+          `/api/strategies/runs/${selectedRunId}/trades?limit=500`,
+        )
+      ).data,
+    enabled: !!selectedRunId && tab === 'trades',
+  })
+
+  const newBacktest = useMutation({
+    mutationFn: async () => {
+      const today = new Date()
+      const end = today.toISOString().slice(0, 10)
+      const start = new Date(today.getTime() - 90 * 24 * 3600 * 1000)
+        .toISOString()
+        .slice(0, 10)
+      const r = await api.post(
+        `/api/strategies/${id}/runs?period_start=${start}&period_end=${end}&starting_capital=100000&seed=42`,
+      )
+      return r.data
+    },
+    onSuccess: () => {
+      toast.show('Backtest queued — auto-refreshes when done', 'success')
+      qc.invalidateQueries({ queryKey: ['runs', id] })
+    },
+    onError: (e: any) =>
+      toast.show(e?.response?.data?.detail || 'Backtest failed', 'error'),
+  })
+
+  if (!strat) {
+    return (
+      <div className="page-shell">
+        <div className="card" style={{ padding: 24 }}>
+          Loading…
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="page-shell">
+      {/* Header */}
+      <div className="card">
+        <div
+          style={{
+            padding: 14,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <button
+              onClick={() => nav('/strategies')}
+              style={{
+                fontSize: 11,
+                color: 'var(--muted)',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 0,
+                marginBottom: 6,
+              }}
+            >
+              ← All strategies
+            </button>
+            <h3 style={{ margin: 0 }}>{strat.name}</h3>
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--muted)',
+                marginTop: 4,
+              }}
+            >
+              {strat.kind} · v{strat.version} · {strat.status}
+              {strat.spec?.universe?.[0] && ` · ${strat.spec.universe[0]}`}
+            </div>
+            {strat.description && (
+              <div style={{ marginTop: 10, fontSize: 13 }}>
+                {strat.description}
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <button
+              className="btn"
+              onClick={() => newBacktest.mutate()}
+              disabled={newBacktest.isPending}
+            >
+              {newBacktest.isPending ? 'Queuing…' : 'Run Backtest (90d)'}
+            </button>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div
+          style={{
+            display: 'flex',
+            borderTop: '1px solid var(--border)',
+            borderBottom: '1px solid var(--border)',
+          }}
+        >
+          {(['recipe', 'performance', 'runs', 'trades'] as Tab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              style={{
+                padding: '10px 18px',
+                border: 'none',
+                background:
+                  tab === t ? 'var(--accent)' : 'transparent',
+                color: tab === t ? '#fff' : 'var(--text)',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: 12,
+                textTransform: 'capitalize',
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ padding: 14 }}>
+          {tab === 'recipe' && <RecipeTab spec={strat.spec} />}
+          {tab === 'performance' && (
+            <PerformanceTab
+              run={selRun}
+              runs={runsList || []}
+              selectedRunId={selectedRunId}
+              onSelectRun={setSelectedRunId}
+            />
+          )}
+          {tab === 'runs' && (
+            <RunsTab
+              runs={runsList || []}
+              selectedRunId={selectedRunId}
+              onSelect={(rid) => {
+                setSelectedRunId(rid)
+                setTab('performance')
+              }}
+            />
+          )}
+          {tab === 'trades' && (
+            <TradesTab
+              trades={trades?.items || []}
+              run={selRun}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Recipe tab ──────────────────────────────────────────────────────
+function RecipeTab({ spec }: { spec: any }) {
+  if (!spec) return <div>—</div>
+  const legs = spec.legs || []
+  const ent = spec.entry_rules || {}
+  const ex = spec.exit_rules || {}
+  const risk = spec.risk || {}
+
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        gap: 14,
+      }}
+    >
+      <Section title="Legs">
+        {legs.map((l: any) => (
+          <div
+            key={l.leg_id}
+            style={{ fontSize: 12, padding: '6px 0', borderBottom: '1px solid var(--border)' }}
+          >
+            <b>{l.action}</b> {l.qty_lots}× {l.instrument_type}{' '}
+            {l.option_type && `${l.option_type}`}
+            {l.strike?.mode === 'ATM_OFFSET' &&
+              ` @ ATM${l.strike.offset >= 0 ? '+' : ''}${l.strike.offset}`}
+            {l.strike?.mode === 'ABSOLUTE' && ` @ ${l.strike.value}`}
+            {l.expiry &&
+              ` · ${l.expiry.mode}${
+                l.expiry.offset != null ? ` +${l.expiry.offset}` : ''
+              }`}
+          </div>
+        ))}
+      </Section>
+
+      <Section title="Entry">
+        <KV k="Trigger" v={ent.trigger} />
+        <KV k="Schedule" v={ent.schedule?.time_window} />
+        <KV k="Days" v={(ent.schedule?.days || []).join(', ')} />
+        {(ent.conditions || []).map((c: any, i: number) => (
+          <KV
+            key={i}
+            k={`Condition ${i + 1}`}
+            v={`${c.feature} ${c.op} ${
+              Array.isArray(c.value) ? `[${c.value.join(', ')}]` : c.value
+            }`}
+          />
+        ))}
+      </Section>
+
+      <Section title="Exit">
+        <KV k="Take-profit" v={ex.tp_pct ? `${(ex.tp_pct * 100).toFixed(1)}%` : '—'} />
+        <KV k="Stop-loss" v={ex.sl_pct ? `${(ex.sl_pct * 100).toFixed(1)}%` : '—'} />
+        <KV k="Time stop" v={ex.time_stop_minutes ? `${ex.time_stop_minutes} min` : '—'} />
+        <KV k="Exit at close" v={ex.exit_at_close ? 'yes' : 'no'} />
+      </Section>
+
+      <Section title="Risk caps">
+        <KV k="Max concurrent" v={risk.max_concurrent} />
+        <KV k="Max daily loss ₹" v={num(risk.max_daily_loss_inr)} />
+        <KV k="Max position ₹" v={num(risk.max_position_inr)} />
+        <KV k="Max drawdown %" v={risk.max_drawdown_pct} />
+      </Section>
+    </div>
+  )
+}
+
+// ── Performance tab ─────────────────────────────────────────────────
+function PerformanceTab({
+  run,
+  runs,
+  selectedRunId,
+  onSelectRun,
+}: {
+  run: Run | undefined
+  runs: Run[]
+  selectedRunId: string | null
+  onSelectRun: (id: string) => void
+}) {
+  if (!run) {
+    return (
+      <div style={{ textAlign: 'center', color: 'var(--muted)', padding: 30 }}>
+        No runs yet. Click <b>Run Backtest</b> above.
+      </div>
+    )
+  }
+
+  const m = run.metrics || {}
+  const curve = (run.equity_curve || []).map((p, i) => ({
+    idx: i,
+    equity: p.equity,
+  }))
+  const startCap = m.starting_capital ?? 100000
+
+  return (
+    <div>
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          marginBottom: 12,
+        }}
+      >
+        <span style={{ fontSize: 11, color: 'var(--muted)' }}>Run:</span>
+        <select
+          value={selectedRunId || ''}
+          onChange={(e) => onSelectRun(e.target.value)}
+          style={{
+            background: 'var(--card2)',
+            color: 'var(--text)',
+            border: '1px solid var(--border)',
+            borderRadius: 4,
+            padding: '4px 8px',
+            fontSize: 12,
+          }}
+        >
+          {runs.map((r) => (
+            <option key={r.id} value={r.id}>
+              {new Date(r.started_at).toLocaleString()} · {r.mode} ·{' '}
+              {r.status}
+            </option>
+          ))}
+        </select>
+        {run.status === 'RUNNING' && (
+          <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+            ⟳ running…
+          </span>
+        )}
+      </div>
+
+      {/* KPI strip */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+          gap: 10,
+          marginBottom: 18,
+        }}
+      >
+        <KPI label="Trades" value={num(m.total_trades, 0)} />
+        <KPI
+          label="Win rate"
+          value={m.win_rate != null ? `${(m.win_rate * 100).toFixed(1)}%` : '—'}
+        />
+        <KPI
+          label="ROI"
+          value={m.roi_pct != null ? `${num(m.roi_pct, 2)}%` : '—'}
+          accent={(m.roi_pct ?? 0) >= 0 ? '#2da14b' : '#e54848'}
+        />
+        <KPI
+          label="Max DD"
+          value={m.max_drawdown_pct != null ? `${num(m.max_drawdown_pct, 2)}%` : '—'}
+        />
+        <KPI label="Sharpe" value={num(m.sharpe, 2)} />
+        <KPI label="Profit fct" value={num(m.profit_factor, 2)} />
+        <KPI label="Fees ₹" value={num(m.fees_paid_inr, 0)} />
+        <KPI label="Final ₹" value={num(m.final_capital, 0)} />
+      </div>
+
+      {/* Equity curve */}
+      {curve.length > 1 && (
+        <div style={{ height: 260 }}>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>
+            Equity curve (trade-by-trade)
+          </div>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={curve}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="idx" tick={{ fontSize: 10 }} stroke="var(--muted)" />
+              <YAxis
+                tick={{ fontSize: 10 }}
+                stroke="var(--muted)"
+                domain={['dataMin', 'dataMax']}
+              />
+              <Tooltip {...chartTooltipStyles()} />
+              <ReferenceLine y={startCap} stroke="var(--muted)" strokeDasharray="3 3" />
+              <Line
+                type="monotone"
+                dataKey="equity"
+                stroke="#4a9fda"
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Data quality */}
+      {run.data_quality && Object.keys(run.data_quality).length > 0 && (
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 14 }}>
+          <b>Data quality:</b> {run.data_quality.sessions_processed}/
+          {(run.data_quality.sessions_processed || 0) +
+            (run.data_quality.sessions_skipped || 0)}{' '}
+          sessions processed
+          {run.data_quality.source_mix_pct && (
+            <>
+              {' · '}
+              source mix:{' '}
+              {Object.entries(run.data_quality.source_mix_pct)
+                .map(([k, v]) => `${k}: ${v}%`)
+                .join(', ')}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Runs tab ───────────────────────────────────────────────────────
+function RunsTab({
+  runs,
+  selectedRunId,
+  onSelect,
+}: {
+  runs: Run[]
+  selectedRunId: string | null
+  onSelect: (id: string) => void
+}) {
+  if (runs.length === 0)
+    return <div style={{ color: 'var(--muted)' }}>No runs yet.</div>
+
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      <thead>
+        <tr style={{ borderBottom: '1px solid var(--border)' }}>
+          {['Started', 'Mode', 'Status', 'Trades', 'WR', 'ROI', 'DD', 'Sharpe', ''].map(
+            (h) => (
+              <th
+                key={h}
+                style={{
+                  textAlign: 'left',
+                  padding: '6px 8px',
+                  color: 'var(--muted)',
+                }}
+              >
+                {h}
+              </th>
+            ),
+          )}
+        </tr>
+      </thead>
+      <tbody>
+        {runs.map((r) => {
+          const m = r.metrics || {}
+          return (
+            <tr
+              key={r.id}
+              style={{
+                borderBottom: '1px solid var(--border)',
+                background: r.id === selectedRunId ? 'var(--card2)' : 'transparent',
+              }}
+            >
+              <td style={{ padding: '6px 8px' }}>
+                {new Date(r.started_at).toLocaleString()}
+              </td>
+              <td style={{ padding: '6px 8px' }}>{r.mode}</td>
+              <td style={{ padding: '6px 8px' }}>{r.status}</td>
+              <td style={{ padding: '6px 8px' }}>{num(m.total_trades, 0)}</td>
+              <td style={{ padding: '6px 8px' }}>
+                {m.win_rate != null ? `${(m.win_rate * 100).toFixed(1)}%` : '—'}
+              </td>
+              <td
+                style={{
+                  padding: '6px 8px',
+                  color: (m.roi_pct ?? 0) >= 0 ? '#2da14b' : '#e54848',
+                  fontWeight: 600,
+                }}
+              >
+                {m.roi_pct != null ? `${num(m.roi_pct, 2)}%` : '—'}
+              </td>
+              <td style={{ padding: '6px 8px' }}>
+                {m.max_drawdown_pct != null
+                  ? `${num(m.max_drawdown_pct, 2)}%`
+                  : '—'}
+              </td>
+              <td style={{ padding: '6px 8px' }}>{num(m.sharpe, 2)}</td>
+              <td style={{ padding: '6px 8px' }}>
+                <button
+                  onClick={() => onSelect(r.id)}
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--accent)',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                >
+                  view →
+                </button>
+              </td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+}
+
+// ── Trades tab ─────────────────────────────────────────────────────
+function TradesTab({
+  trades,
+  run,
+}: {
+  trades: Trade[]
+  run: Run | undefined
+}) {
+  if (!run)
+    return (
+      <div style={{ color: 'var(--muted)' }}>
+        Select a run from the Runs tab first.
+      </div>
+    )
+  if (trades.length === 0)
+    return (
+      <div style={{ color: 'var(--muted)' }}>
+        No trades fired in this run.
+      </div>
+    )
+
+  return (
+    <div style={{ overflow: 'auto' }}>
+      <table
+        style={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          fontSize: 12,
+        }}
+      >
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--border)' }}>
+            {[
+              'Entry',
+              'Exit',
+              'Reason',
+              'Qty',
+              'Entry ₹',
+              'Exit ₹',
+              'P&L %',
+              'P&L ₹',
+              'MAE %',
+              'MFE %',
+            ].map((h) => (
+              <th
+                key={h}
+                style={{
+                  textAlign: 'right',
+                  padding: '6px 8px',
+                  color: 'var(--muted)',
+                }}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {trades.map((t) => {
+            const leg = t.legs?.[0] || {}
+            const pnlColor =
+              (t.pnl_pct ?? 0) >= 0 ? '#2da14b' : '#e54848'
+            return (
+              <tr key={t.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                  {new Date(t.entry_ts).toLocaleString()}
+                </td>
+                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                  {t.exit_ts ? new Date(t.exit_ts).toLocaleString() : '—'}
+                </td>
+                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                  {t.exit_reason}
+                </td>
+                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                  {leg.qty}
+                </td>
+                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                  {num(leg.entry_price)}
+                </td>
+                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                  {num(leg.exit_price)}
+                </td>
+                <td
+                  style={{
+                    padding: '4px 8px',
+                    textAlign: 'right',
+                    color: pnlColor,
+                    fontWeight: 600,
+                  }}
+                >
+                  {t.pnl_pct != null ? `${num(t.pnl_pct, 2)}%` : '—'}
+                </td>
+                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                  {num(t.gross_pnl_inr, 0)}
+                </td>
+                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                  {t.mae_pct != null ? `${num(t.mae_pct, 1)}%` : '—'}
+                </td>
+                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                  {t.mfe_pct != null ? `${num(t.mfe_pct, 1)}%` : '—'}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--muted)' }}>
+        Showing {trades.length} trades. Export CSV: coming soon.
+      </div>
+    </div>
+  )
+}
+
+// ── Small reusables ────────────────────────────────────────────────
+function Section({ title, children }: { title: string; children: any }) {
+  return (
+    <div
+      style={{
+        border: '1px solid var(--border)',
+        borderRadius: 6,
+        padding: 10,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          color: 'var(--muted)',
+          textTransform: 'uppercase',
+          letterSpacing: 0.6,
+          marginBottom: 8,
+        }}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function KV({ k, v }: { k: string; v: any }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        padding: '4px 0',
+        fontSize: 12,
+      }}
+    >
+      <span style={{ color: 'var(--muted)' }}>{k}</span>
+      <span style={{ color: 'var(--text)', fontWeight: 600 }}>{v ?? '—'}</span>
+    </div>
+  )
+}
+
+function KPI({
+  label,
+  value,
+  accent,
+}: {
+  label: string
+  value: any
+  accent?: string
+}) {
+  return (
+    <div
+      style={{
+        border: '1px solid var(--border)',
+        borderRadius: 6,
+        padding: 10,
+      }}
+    >
+      <div style={{ fontSize: 10, color: 'var(--muted)' }}>{label}</div>
+      <div
+        style={{
+          fontSize: 18,
+          fontWeight: 700,
+          color: accent || 'var(--text)',
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}

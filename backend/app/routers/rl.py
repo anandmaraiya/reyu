@@ -268,11 +268,18 @@ async def evaluate(
         description="Enforce one-trade-at-a-time (matches live)"),
     weight_decay: float = Query(0.0, ge=0.0, le=0.1,
         description="L2 weight decay for policy.update (0 = no regularization)"),
+    use_real_pricer: bool = Query(False,
+        description="Use real intraday option premiums from option_contract_1m where available (BS fallback for gaps)"),
     s: AsyncSession = Depends(get_session),
 ):
     """Train/test split with optional knobs to A/B configurations.
     When `sequential=true`, only one trade is open at any time and ROI
-    is computed against `starting_capital` x `lot_size` premium outlay."""
+    is computed against `starting_capital` x `lot_size` premium outlay.
+
+    `use_real_pricer=true` reads option premiums from `option_contract_1m`
+    (Fyers history backfill) for each bar; falls back to BS when the
+    table has no row. Result includes a `pricer_coverage` block so you
+    see real-vs-BS mix at a glance."""
     out = []
     for sym in symbols:
         eff_lot = lot_size or (await resolve_symbol(sym)).lot_size or 1
@@ -285,6 +292,7 @@ async def evaluate(
             brokerage_per_trade=brokerage_per_trade,
             sequential=sequential,
             weight_decay=weight_decay,
+            use_real_pricer=use_real_pricer,
         )
         out.append({
             "underlying": r.underlying,
@@ -296,6 +304,7 @@ async def evaluate(
             "test_cum_pnl_pct": r.test_cum_pnl_pct,
             "test_avg_pnl_per_trade_pct": r.test_avg_pnl_per_trade,
             "roi": getattr(r, "roi", None),
+            "pricer_coverage": getattr(r, "pricer_coverage", None),
         })
     return {"results": out, "config": {
         "total_days": total_days, "test_days": test_days,
@@ -305,6 +314,7 @@ async def evaluate(
         "starting_capital": starting_capital,
         "lot_size": lot_size, "brokerage_per_trade": brokerage_per_trade,
         "sequential": sequential,
+        "use_real_pricer": use_real_pricer,
     }}
 
 

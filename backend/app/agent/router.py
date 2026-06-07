@@ -48,6 +48,12 @@ def _detect_watchlist(text: str) -> str | None:
 
 # Intent keywords -> tool. Order matters: more specific patterns first.
 _INTENTS = [
+    # Strategy-builder family — high priority so they match before generic "strategy"
+    (r"\b(create|build|make|save)\b.*\b(strategy|strat)\b", "create_strategy"),
+    (r"\b(my|list|show all)\b.*\b(strategies|strats)\b", "list_my_strategies"),
+    (r"\bbacktest\b.*\b(strategy|strat|named?|called)\b", "backtest_strategy"),
+    (r"\brun (a )?backtest\b", "backtest_strategy"),
+    # Existing intents
     (r"\b(positions?|open trade|my book|p&?l)\b", "positions"),
     (r"\b(hedge|delta[- ]?neutral|protect|cover)\b", "suggest_hedge"),
     (r"\b(scalp|scalping|quick|signal|setup)\b", "scalp_scan"),
@@ -128,5 +134,73 @@ def route(text: str) -> dict:
 
     elif tool == "positions":
         pass
+
+    elif tool == "create_strategy":
+        # Pull TP/SL %, action, opt type, optional condition from NL
+        if sym:
+            args["universe"] = [sym]
+        else:
+            args["universe"] = ["NSE:NIFTY50-INDEX"]
+        args["action"] = "SELL" if re.search(r"\b(sell|short|written)\b", text, re.IGNORECASE) else "BUY"
+        # Option type
+        if re.search(r"\b(call|ce)\b", text, re.IGNORECASE):
+            args["option_type"] = "CE"
+        elif re.search(r"\b(put|pe)\b", text, re.IGNORECASE):
+            args["option_type"] = "PE"
+        else:
+            args["option_type"] = "CE"
+        # TP / SL %
+        m_tp = re.search(r"\b(?:tp|take[- ]?profit|target)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%?", text, re.IGNORECASE)
+        m_sl = re.search(r"\b(?:sl|stop[- ]?loss|stop)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%?", text, re.IGNORECASE)
+        if m_tp:
+            args["tp_pct"] = float(m_tp.group(1)) / 100
+        if m_sl:
+            args["sl_pct"] = float(m_sl.group(1)) / 100
+        # PCR / IV / spot condition
+        m_cond = re.search(
+            r"\b(pcr|pcr[_ ]oi|atm[_ ]iv|spot[_ ]change[_ ]today|spot[_ ]change[_ ]5m|"
+            r"writer[_ ]skew[_ ]log|max[_ ]pain[_ ]distance[_ ]pct)\s*"
+            r"([<>]=?|=|==)\s*([0-9]+(?:\.[0-9]+)?)",
+            text, re.IGNORECASE,
+        )
+        if m_cond:
+            feat_map = {
+                "pcr": "pcr_oi", "pcr oi": "pcr_oi", "pcr_oi": "pcr_oi",
+                "atm iv": "atm_iv", "atm_iv": "atm_iv",
+                "spot change today": "spot_change_today_pct",
+                "spot_change_today": "spot_change_today_pct",
+                "spot change 5m": "spot_change_5m_pct",
+                "spot_change_5m": "spot_change_5m_pct",
+                "writer skew log": "writer_skew_log",
+                "writer_skew_log": "writer_skew_log",
+                "max pain distance pct": "max_pain_distance_pct",
+                "max_pain_distance_pct": "max_pain_distance_pct",
+            }
+            feat = feat_map.get(m_cond.group(1).lower().replace("_", " "),
+                                m_cond.group(1).lower().replace(" ", "_"))
+            args["feature"] = feat
+            args["op"] = m_cond.group(2) if m_cond.group(2) != "=" else "=="
+            args["value"] = float(m_cond.group(3))
+        # Strategy name: "called X" / "named X" / "strategy X"
+        m_name = re.search(r"\b(?:called|named|name[:=]?)\s+['\"]?(.{3,40}?)['\"]?(?:\s+(?:that|which|when|with|$)|$)",
+                           text, re.IGNORECASE)
+        if m_name:
+            args["name"] = m_name.group(1).strip()
+        else:
+            # Fallback name
+            args["name"] = f"{args['action']} {args['option_type']} {args['universe'][0].split(':')[1]}"
+
+    elif tool == "list_my_strategies":
+        pass
+
+    elif tool == "backtest_strategy":
+        # "backtest <name>" or "backtest strategy called X"
+        m_name = re.search(r"backtest\s+(?:strategy\s+)?(?:called\s+|named\s+|strategy\s+)?['\"]?(.{3,40}?)['\"]?(?:\s+for\s|\s+over\s|\s+last\s|$)",
+                           text, re.IGNORECASE)
+        if m_name:
+            args["name"] = m_name.group(1).strip()
+        m_days = re.search(r"\b(\d+)\s*(?:day|d)\b", text, re.IGNORECASE)
+        if m_days:
+            args["days"] = int(m_days.group(1))
 
     return {"tool": tool, "args": args}

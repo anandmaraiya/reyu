@@ -21,6 +21,9 @@ from app.analytics.compare import compare_watchlist
 from app.analytics.scalping import scalp_signal
 from app.analytics.hedge import suggest_hedge as _suggest_hedge
 from app.analytics.payoff import compute as compute_payoff
+from app.agent.strategy_tools import (
+    t_create_strategy, t_list_my_strategies, t_backtest_strategy,
+)
 from app.store import store
 
 
@@ -240,6 +243,38 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": "Return a chart image URL for a symbol. chart_type: oi, pcr, iv-smile.",
         "parameters": {"symbol": "string", "chart_type": "string (oi|pcr|iv-smile)"},
         "handler": t_chart_request,
+    },
+    "create_strategy": {
+        "description": "Create + save a new options strategy. Accepts shorthand "
+                       "(name, universe, action, option_type, tp_pct, sl_pct, feature, op, value) "
+                       "or a full {spec} object. Saves as DRAFT.",
+        "parameters": {
+            "name": "string", "universe": "string (e.g. NSE:NIFTY50-INDEX)",
+            "action": "BUY|SELL", "option_type": "CE|PE",
+            "tp_pct": "float 0..1", "sl_pct": "float 0..1",
+            "feature": "string (optional - rl feature name)",
+            "op": "string (>|<|>=|<=|== between)",
+            "value": "float (condition threshold)",
+            "qty_lots": "int (default 1)",
+            "tags": "list[string]", "spec": "object (full StrategySpec)",
+        },
+        "handler": t_create_strategy,
+    },
+    "list_my_strategies": {
+        "description": "List the user's saved strategies — name, status, version, KPIs.",
+        "parameters": {},
+        "handler": t_list_my_strategies,
+    },
+    "backtest_strategy": {
+        "description": "Kick a backtest run on an existing strategy. Identify by `strategy_id` "
+                       "or partial `name`. Default window is last 90 days.",
+        "parameters": {
+            "strategy_id": "string (optional)",
+            "name": "string (optional, partial match)",
+            "days": "int (lookback window, default 90)",
+            "starting_capital": "float (default 100000)",
+        },
+        "handler": t_backtest_strategy,
     },
 }
 

@@ -1,7 +1,23 @@
 # Reyu.ai — Task tracker
 
-Snapshot: end of session on **2026-06-06**. Working tree has uncommitted RL
-work — commit before next session. Resume from the "📌 Next up" list.
+Snapshot: end of session on **2026-06-07**. Working tree dirty —
+strategy framework + frontend + chat tools + real-pricer + EOD bandit
+all landed this session.
+
+## 🟢 This session shipped (2026-06-07)
+
+| # | Item | Verification |
+|---|---|---|
+| - | NSE Bhavcopy EOD validation: NIFTY 2020 always-long +18.6 % / DD 6.8 % / WR 54.9 % on real prices | live |
+| - | NSE Bhavcopy multi-year 2019-2024: always-long +39 %, momentum +27 % | live |
+| - | Established BS-synth was overstating by ~50-100× annualised — honest NIFTY EOD ≈ 7-15 %/yr | math doc |
+| - | EOD bandit `app/sim/eod_bandit.py` trained on Bhavcopy — learned `w_long[atm_change]=+0.50`, `w_short[atm_change]=-0.37` (momentum) | tested |
+| - | Sprint 2 frontend: `/strategies` list + `/strategies/:id` (Recipe / Performance / Runs / Trades tabs) | wired |
+| - | Real-pricer `app/sim/real_pricer.py` — reads `option_contract_1m`, BS fallback, coverage reporting | code ready, awaiting Fyers data |
+| - | `option_contract_1m` table + Timescale hypertable + Fyers-history backfill `app/data/option_history.py` | code ready, awaiting Fyers re-auth |
+| - | `POST /api/rl/evaluate?use_real_pricer=true` exposes pricer mix as `pricer_coverage` | code ready |
+| - | Sprint 3 chatbot strategy-builder: `t_create_strategy`, `t_list_my_strategies`, `t_backtest_strategy` + NL router extraction (extracts feature/op/value, TP/SL %, action, opt type, name) | direct-call tested ✓ |
+| - | Bhavcopy 2023-2024 gap backfill in flight (2023-06 as of snapshot) | running |
 
 ## 🟢 This session shipped (2026-06-06)
 

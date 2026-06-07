@@ -186,7 +186,10 @@ def simulate_session(
         opt = "CE" if decision.action == "LONG" else "PE"
         T_entry = bs_dte_days / 365
         iv = max(features[10] if len(features) > 10 else 0.15, iv_floor)
-        entry_prem = pricer(spot_entry, strike, T_entry, opt, {"iv": iv})
+        # Pricer ctx: iv for BS, ts for real-data lookup (real_pricer needs it)
+        entry_ts = candles_5m[idx][0]
+        entry_prem = pricer(spot_entry, strike, T_entry, opt,
+                            {"iv": iv, "ts": entry_ts})
         if entry_prem <= 0.5:
             idx += 1
             continue
@@ -202,7 +205,8 @@ def simulate_session(
         for j in range(idx + 1, min(idx + max_hold_bars, len(candles_5m))):
             spot_j = candles_5m[j][4]
             T_j = max(T_entry - (j - idx) * 5 / (60 * 24 * 365), 1 / 365 / 24)
-            prem_j = pricer(spot_j, strike, T_j, opt, {"iv": iv})
+            prem_j = pricer(spot_j, strike, T_j, opt,
+                            {"iv": iv, "ts": candles_5m[j][0]})
             move_pct = (prem_j / entry_prem - 1.0) * 100
             if move_pct > max_fav: max_fav = move_pct
             if move_pct < max_adv: max_adv = move_pct

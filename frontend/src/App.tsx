@@ -12,6 +12,8 @@ import Backtest from './pages/Backtest'
 import Positions from './pages/Positions'
 import Login from './pages/Login'
 import Saved from './pages/Saved'
+import Strategies from './pages/Strategies'
+import StrategyDetail from './pages/StrategyDetail'
 import Audit from './pages/Audit'
 import Compare from './pages/Compare'
 import Settings from './pages/Settings'
@@ -30,6 +32,7 @@ const NAV: NavGroup[] = [
   { group: 'Trade', items: [
     { to: '/dashboard', label: 'Option Chain', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 17h4V7H4z"/><path d="M10 17h4V4h-4z"/><path d="M16 17h4V11h-4z"/></svg> },
     { to: '/strategy', label: 'Strategy Builder', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M11 18h6"/></svg> },
+    { to: '/strategies', label: 'My Strategies', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="7" height="7"/><rect x="14" y="4" width="7" height="7"/><rect x="3" y="13" width="7" height="7"/><rect x="14" y="13" width="7" height="7"/></svg> },
     { to: '/chat', label: 'AI Co-pilot', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg> },
     { to: '/backtest', label: 'Backtest', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-6 4 4 6-9"/></svg> },
     { to: '/compare', label: 'Compare Strategies', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h6v12H4z"/><path d="M14 9h6v9h-6z"/></svg> },
@@ -61,6 +64,7 @@ function StatusDot({ ok, label }: { ok: boolean; label: string }) {
 const PAGE_TITLE_MAP: Record<string, string> = {
   '/dashboard': 'Option Chain',
   '/strategy': 'Strategy Builder',
+  '/strategies': 'My Strategies',
   '/chat': 'AI Co-pilot',
   '/backtest': 'Backtest',
   '/compare': 'Compare Strategies',
@@ -205,6 +209,8 @@ export default function App() {
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/strategy" element={<Strategy />} />
+                <Route path="/strategies" element={<Strategies />} />
+                <Route path="/strategies/:id" element={<StrategyDetail />} />
                 <Route path="/chat" element={<Chat />} />
                 <Route path="/backtest" element={<Backtest />} />
                 <Route path="/compare" element={<Compare />} />

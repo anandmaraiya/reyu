@@ -139,6 +139,9 @@ async def chat(req: ChatRequest, user: dict | None = Depends(get_current_user)):
                 text=error_text,
                 ts=datetime.utcnow().isoformat(),
             )
+        # Thread the chat session id so strategy-creation tools can link
+        # the saved Strategy row back to the conversation that built it.
+        decision["args"].setdefault("chat_session_id", sid)
         result = await call_tool(decision["tool"], decision["args"], user)
         tool_used = decision["tool"]
         tool_args_used = decision["args"]
