@@ -248,6 +248,17 @@ async def rl_sweep_cycle() -> None:
             log.exception("RL sweep failed: %s", e)
 
 
+async def paper_live_cycle() -> None:
+    """Every 60s during market hours, fire entries for PAPER_LIVE
+    strategies + reconcile closed trades. Sprint 4.1."""
+    from app.strategy.paper_live import cycle, reconcile_closed_trades
+    try:
+        await cycle()
+        await reconcile_closed_trades()
+    except Exception as e:
+        log.exception("paper-live cycle failed: %s", e)
+
+
 async def bhavcopy_daily_pull() -> None:
     """Daily NSE F&O Bhavcopy pull. NSE publishes around 17:30 IST; we
     fire at 18:00 IST (12:30 UTC) Mon-Fri to be safe. Idempotent — the
@@ -267,6 +278,9 @@ def start() -> None:
                       id="rl_decide", max_instances=1, coalesce=True)
     scheduler.add_job(rl_sweep_cycle, "interval", seconds=60,
                       id="rl_sweep", max_instances=1, coalesce=True)
+    # Paper-live strategies — 60s cadence during market hours
+    scheduler.add_job(paper_live_cycle, "interval", seconds=60,
+                      id="paper_live", max_instances=1, coalesce=True)
     # NSE Bhavcopy — 18:00 IST = 12:30 UTC, Mon-Fri
     scheduler.add_job(bhavcopy_daily_pull,
                       CronTrigger(day_of_week="mon-fri", hour=12, minute=30),
