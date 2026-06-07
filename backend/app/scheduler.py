@@ -97,10 +97,22 @@ async def _save_tick(symbol: str) -> None:
 
 
 async def _save_snapshot(symbol: str) -> None:
-    try:
-        raw = await fy.option_chain(symbol, 30)
-    except Exception as e:
-        log.warning("chain %s failed: %s", symbol, e)
+    # Chain fetch with 3-attempt exponential backoff. Fyers throttles
+    # under burst load; without this, ~5-15 % of tier-1 polls return
+    # empty during volatile periods and we lose that minute's snapshot
+    # permanently (no historical chain endpoint to back-fill from).
+    raw = None
+    for attempt in range(3):
+        try:
+            raw = await fy.option_chain(symbol, 30)
+            if raw:
+                break
+        except Exception as e:
+            if attempt == 2:
+                log.warning("chain %s failed after 3 attempts: %s", symbol, e)
+                return
+            await asyncio.sleep(0.8 * (2 ** attempt))      # 0.8s, 1.6s
+    if raw is None:
         return
     chain = normalize_chain(raw)
     if not chain.get("strikes"):

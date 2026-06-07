@@ -177,6 +177,20 @@ single-run results aren't trustworthy for go/no-go decisions.
 - Re-evaluate FINNIFTY across all bracket × conviction combos with N=5
   seeds before deciding whether to re-enable it
 
+### NU-12b — Slippage + tax-correct ROI model
+The backtest underestimates friction by ~5–6 % ROI per 14 days. Wire
+this into `compute_roi`:
+
+- `bid_ask_pct` query param (default 0.3 %) — applied as round-trip cost
+- `stt_pct` (0.0625 % sell side, options)
+- `exchange_pct` (0.053 % both legs)
+- `gst_pct` on brokerage + transaction charges (18 %)
+- Output a `friction_breakdown` block so we can read where ROI went
+
+Once shipped, re-baseline NIFTY / NIFTYBANK — those become the honest
+"what you'd actually pocket" numbers we can compare to live paper-trade
+performance once Monday's session closes.
+
 ### NU-13 — Per-symbol bracket policy (not 1-size-fits-all)
 Confirmed via Saturday's sweep: NIFTY likes 1.67:1 (25/15), NIFTYBANK
 likes 1:1 (20/20). When onboarding a new symbol, the workflow must
@@ -206,23 +220,80 @@ Big gap = BS-pricing inflation we should be quantifying. Surface in
 
 ---
 
-## 📦 Operational checklist (before tomorrow)
+## 📦 Operational checklist (before Monday 09:15 IST)
+
+**One-shot**: `.\scripts\start_market_day.ps1` does steps 1-5 below
+automatically + holds the wake-lock until 15:35 IST.
 
 - [ ] Containers up: `docker compose up -d`
 - [ ] Connect Fyers in browser (token expires ~daily): http://localhost:5173/login → "Connect Fyers"
 - [ ] `/api/system/status` → `fyers: true, demo_mode: false`
 - [ ] `/api/admin/universe` → tracked count ≥ 186
+- [ ] **Run `.\scripts\keep_awake.ps1 -ReleaseAt "15:35"`** so the laptop
+      can't sleep during market hours (system + display stay on, kernel
+      enforced — no Group Policy / power plan changes needed)
+- [ ] Monday after 15:30 IST: `GET /api/data/snapshot-health/today` —
+      tier-1 coverage should be ≥ 95 %; investigate any symbol below 80 %
 - [ ] **`POST /api/rl/sync-lot-sizes`** once per quarter (or after NSE specs change)
 - [ ] First RL inference will fire 5min after backend start; verify `/api/rl/summary` shows `todays_trades > 0` later
-- [ ] Confirm `option_strike_snapshot` row count growing (`SELECT count(*) FROM option_strike_snapshot WHERE ts >= now() - interval '1 day';` — should be ~250k/day during market hours)
+- [ ] Confirm `option_strike_snapshot` row count growing (`SELECT count(*) FROM option_strike_snapshot WHERE ts >= now() - interval '1 day';` — should be ~155k/day at tier-1 × 21 strikes × 376 minutes during market hours)
 - [ ] Optional: set `OPENROUTER_API_KEY` and `TELEGRAM_BOT_TOKEN` in `.env` for the agent + bot
+
+### What happens if the laptop sleeps anyway / internet drops mid-day?
+
+- **Chain snapshot gaps**: those minutes are **lost permanently** — Fyers
+  does not expose historical option chains, so there is no backfill.
+  The gap-detector endpoint (`/api/data/snapshot-health`) quantifies
+  the damage so we can decide whether to use that day's data for RL.
+- **Spot candle gaps (`tick_1m`)**: those *can* be backfilled via
+  `fy.history()` after reconnect — the scheduler already re-pulls
+  the trailing 5 candles on every poll, so a short outage self-heals.
+- **RL paper trades during a gap**: the scheduler's `is_trading_hours`
+  + Fyers auth checks mean no trades open on stale data. After
+  reconnect the next 5-min decide cycle fires normally.
+
+Tier-1 chain-fetch now retries 3× with exponential backoff (0.8s →
+1.6s) on transient Fyers throttling, so brief network blips no longer
+drop a minute. Persistent outages (> 5 s) still create a gap.
 
 ## 🎯 Go-live milestones
 
+- **Mon 2026-06-08 09:15 IST — first real session for data collection**
+  - Run `.\scripts\start_market_day.ps1` before 09:15 IST. It brings up
+    Docker, verifies Fyers auth, acquires the wake-lock until 15:35 IST.
+  - After 15:30, hit `/api/data/snapshot-health/today` — target coverage
+    ≥ 95 % on tier-1.
 - **Before next session opens trading** — ship NU-12a multi-seed eval so
   config picks are reliable, then re-onboard FINNIFTY properly
 - **2026-06-15** (Mon, ~10 trading days of strike-snapshot data) — run NU-2 real-premium backfill, get honest ROI numbers
 - **Next-to-next weekend** — flip live whitelist (NIFTY + NIFTYBANK, possibly FINNIFTY if multi-seed re-eval clears) from paper to small real positions, monitor daily
+
+## 📐 ROI math audit (2026-06-06 evening)
+
+Audited `compute_roi` + `_seq_simulate_session`. The accounting is
+structurally correct (no concurrent trades, lot math, capital
+sequencing, drawdown). The biases are in the **synthetic premium**, not
+the arithmetic:
+
+| Friction layer | Adjustment to backtest ROI | Notes |
+|---|---|---|
+| Brokerage modelled at ₹50 | × 0.97 | Real round-trip ≈ ₹65 incl STT, exchange, GST |
+| Slippage = 0 | – 5–6 % abs | Real bid-ask ≈ ₹1 × 65 lot per round trip |
+| BS IV = realized vol (no VRP) | × 0.75 | Real IV ~1.3× backtest IV → premium %-moves dampened |
+| Burst-spread fill drag | × 0.85 | Real fills at bid not mid on event days |
+| 5-min bar TP/SL attribution | × 0.95 | Picks TP first when both fire in a bar |
+
+**Cumulative adjustment: backtest × ~0.5.** NIFTY headline +29 % / 14d →
+honest real-fill expectation ≈ +12–16 % / 14d.
+
+Variance bursts (your question): vol clustering helps wins on the
+synthetic side (we paid the calm-period BS price, then a burst gives a
+fat % move), but hurts real fills via spread widening (₹0.5 spread →
+₹3–5 on event days, so theoretical fills you don't actually get). Net
+direction is downward on real money but the *shape* (positive
+expectancy on indices) holds up.
+
+---
 
 ---
 

@@ -7,7 +7,7 @@ from fastapi.openapi.utils import get_openapi
 from app.routers import (
     auth, user_auth, options, analytics, watchlist, portfolio, scalping,
     timeseries, stream, orders, strategy, system, journal, notify, admin, chat, charts, telegram,
-    backtest, billing, data_api,webhook_subs, rl
+    backtest, billing, data_api,webhook_subs, rl, snapshot_health
 )
 from app.store import store
 from app.db import init_db
@@ -143,6 +143,7 @@ app.include_router(data_api.router, prefix="/api/data", tags=["data-api"])
 app.include_router(webhook_subs.router, prefix="/api/webhooks", tags=["webhooks"])
 app.include_router(backtest.router, prefix="/api/backtest", tags=["backtest"])
 app.include_router(rl.router, prefix="/api/rl", tags=["rl"])
+app.include_router(snapshot_health.router, prefix="/api/data", tags=["data-health"])
 
 
 @app.get("/api/health")

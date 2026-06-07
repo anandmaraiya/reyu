@@ -41,6 +41,7 @@ _PUBLIC_PATHS = [
     re.compile(r"^/api/ts/"),              # read-only time-series
     re.compile(r"^/api/backtest/"),        # historical replay (read-only)
     re.compile(r"^/api/rl/"),              # RL trading engine (paper trades, read-only inspection)
+    re.compile(r"^/api/data/snapshot-health"),  # pipeline health probe (no PII)
 ]
 
 # Paths that B2B API key consumers hit — rate limit these when using API key
