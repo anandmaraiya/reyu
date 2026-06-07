@@ -183,6 +183,108 @@ class RLTrade(Base):
     action_logprob = Column(Float, nullable=True)         # for policy gradient
 
 
+# ── Strategy framework (Sprint 0) ───────────────────────────────────
+class Strategy(Base):
+    """One row per (strategy, version). Copy-on-edit: PATCH creates a
+    new row with version+1; older runs still reference their version via
+    `strategy_runs.strategy_version` + the immutable `config_snapshot`."""
+    __tablename__ = "strategies"
+    id = Column(String, primary_key=True)             # uuid (same across versions)
+    version = Column(Integer, primary_key=True, default=1)
+    owner_id = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    description = Column(String)
+    kind = Column(String, default="CONDITIONAL")      # CONDITIONAL | RL_BANDIT
+    status = Column(String, default="DRAFT", index=True)   # DRAFT|BACKTESTED|PAPER_LIVE|LIVE|ARCHIVED
+    tier_required = Column(String, default="free")
+    created_by = Column(String, default="manual")     # manual|chatbot|template
+    chatbot_session_id = Column(String, nullable=True)
+    spec = Column(String, nullable=False, default="{}")    # validated StrategySpec JSON
+    tags = Column(String, default="[]")               # JSON list
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class StrategyRun(Base):
+    """One execution of a strategy version — backtest, paper, or live."""
+    __tablename__ = "strategy_runs"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    strategy_id = Column(String, nullable=False, index=True)
+    strategy_version = Column(Integer, nullable=False)
+    owner_id = Column(String, nullable=False, index=True)
+    mode = Column(String, nullable=False, index=True)     # BACKTEST|PAPER|LIVE
+    status = Column(String, default="RUNNING", index=True)  # RUNNING|COMPLETED|HALTED|ERRORED
+    config_snapshot = Column(String, default="{}")        # immutable strategy JSON
+    params = Column(String, default="{}")                 # period, capital, seed, friction
+    metrics = Column(String, default="{}")                # default metric block
+    custom_metrics = Column(String, default="{}")         # user-defined add-ons
+    equity_curve = Column(String, default="[]")           # [{ts, equity}, …]
+    data_quality = Column(String, default="{}")          # source mix, gaps
+    started_at = Column(DateTime, default=datetime.utcnow)
+    ended_at = Column(DateTime, nullable=True)
+    error_message = Column(String, nullable=True)
+
+
+class StrategyTrade(Base):
+    """One fill inside a run. Audit-grade: entry features captured.
+    Separate from `rl_trade` (which is the bandit's research log) so
+    user-owned trades have clean lineage."""
+    __tablename__ = "strategy_trades"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id = Column(String, nullable=False, index=True)
+    strategy_id = Column(String, nullable=False, index=True)
+    strategy_version = Column(Integer, nullable=False)
+    entry_ts = Column(DateTime, nullable=False, index=True)
+    exit_ts = Column(DateTime, nullable=True)
+    entry_signal = Column(String, default="{}")           # feature snapshot at entry
+    exit_reason = Column(String, nullable=True)           # TP|SL|TIMEOUT|MANUAL|RISK_GATE
+    legs = Column(String, default="[]")                   # [{symbol, action, qty, entry_price, exit_price, fees_inr}]
+    gross_pnl_inr = Column(Float, nullable=True)
+    net_pnl_inr = Column(Float, nullable=True)
+    pnl_pct = Column(Float, nullable=True)
+    mae_pct = Column(Float, nullable=True)                # max adverse excursion
+    mfe_pct = Column(Float, nullable=True)                # max favorable excursion
+    policy_version = Column(String, nullable=True)        # for RL_BANDIT strategies — links to rl_policy snapshot
+
+
+class OptionEod(Base):
+    """End-of-day per-strike F&O data from NSE Bhavcopy. Multi-year
+    historical depth (NSE archives go back to ~2010). Powers swing /
+    overnight backtests where 1-min granularity isn't needed."""
+    __tablename__ = "option_eod"
+    trade_date = Column(DateTime, primary_key=True)
+    underlying = Column(String, primary_key=True)
+    expiry = Column(DateTime, primary_key=True)
+    strike = Column(Float, primary_key=True)
+    option_type = Column(String, primary_key=True)        # CE | PE | XX(future)
+    open = Column(Float); high = Column(Float)
+    low = Column(Float); close = Column(Float)
+    settle = Column(Float)
+    volume = Column(BigInteger, default=0)
+    oi = Column(BigInteger, default=0)
+    oi_change = Column(BigInteger, default=0)
+
+
+class OptionIntraday(Base):
+    """Per-strike intraday options OHLCV+OI, 1-min granularity.
+    Sources: TradingTuitions (NIFTY/BANKNIFTY), Breeze API (all F&O),
+    Google Drive bulk imports. Tagged with `source` column for provenance."""
+    __tablename__ = "option_intraday"
+    ts = Column(DateTime, primary_key=True)
+    underlying = Column(String, primary_key=True)
+    expiry = Column(DateTime, primary_key=True)
+    strike = Column(Float, primary_key=True)
+    option_type = Column(String, primary_key=True)        # CE | PE
+    open = Column(Float); high = Column(Float)
+    low = Column(Float); close = Column(Float)
+    volume = Column(BigInteger, default=0)
+    oi = Column(BigInteger, default=0)
+    oi_change = Column(BigInteger, default=0)
+    source = Column(String, default="unknown")
+
+    __table_args__ = (Index("ix_option_intraday_under_ts", "underlying", "ts"),)
+
+
 async def init_db() -> None:
     """Create tables + promote time-series tables to Timescale hypertables."""
     async with engine.begin() as conn:
@@ -333,15 +435,119 @@ async def init_db() -> None:
                 action_logprob FLOAT
             )
         """))
+        # ── Strategy framework tables (Sprint 0) ────────────────────
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS strategies (
+                id VARCHAR NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                owner_id VARCHAR NOT NULL,
+                name VARCHAR NOT NULL,
+                description VARCHAR,
+                kind VARCHAR DEFAULT 'CONDITIONAL',
+                status VARCHAR DEFAULT 'DRAFT',
+                tier_required VARCHAR DEFAULT 'free',
+                created_by VARCHAR DEFAULT 'manual',
+                chatbot_session_id VARCHAR,
+                spec TEXT NOT NULL DEFAULT '{}',
+                tags TEXT DEFAULT '[]',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (id, version)
+            )
+        """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS strategy_runs (
+                id VARCHAR PRIMARY KEY,
+                strategy_id VARCHAR NOT NULL,
+                strategy_version INTEGER NOT NULL,
+                owner_id VARCHAR NOT NULL,
+                mode VARCHAR NOT NULL,
+                status VARCHAR DEFAULT 'RUNNING',
+                config_snapshot TEXT DEFAULT '{}',
+                params TEXT DEFAULT '{}',
+                metrics TEXT DEFAULT '{}',
+                custom_metrics TEXT DEFAULT '{}',
+                equity_curve TEXT DEFAULT '[]',
+                data_quality TEXT DEFAULT '{}',
+                started_at TIMESTAMP DEFAULT NOW(),
+                ended_at TIMESTAMP,
+                error_message TEXT
+            )
+        """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS strategy_trades (
+                id VARCHAR PRIMARY KEY,
+                run_id VARCHAR NOT NULL,
+                strategy_id VARCHAR NOT NULL,
+                strategy_version INTEGER NOT NULL,
+                entry_ts TIMESTAMP NOT NULL,
+                exit_ts TIMESTAMP,
+                entry_signal TEXT DEFAULT '{}',
+                exit_reason VARCHAR,
+                legs TEXT DEFAULT '[]',
+                gross_pnl_inr FLOAT,
+                net_pnl_inr FLOAT,
+                pnl_pct FLOAT,
+                mae_pct FLOAT,
+                mfe_pct FLOAT,
+                policy_version VARCHAR
+            )
+        """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS option_eod (
+                trade_date TIMESTAMP NOT NULL,
+                underlying VARCHAR NOT NULL,
+                expiry TIMESTAMP NOT NULL,
+                strike FLOAT NOT NULL,
+                option_type VARCHAR NOT NULL,
+                open FLOAT, high FLOAT, low FLOAT, close FLOAT,
+                settle FLOAT,
+                volume BIGINT DEFAULT 0,
+                oi BIGINT DEFAULT 0,
+                oi_change BIGINT DEFAULT 0,
+                PRIMARY KEY (trade_date, underlying, expiry, strike, option_type)
+            )
+        """))
         for stmt in (
             "CREATE EXTENSION IF NOT EXISTS timescaledb",
             "SELECT create_hypertable('tick_1m', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
             "SELECT create_hypertable('option_snapshot', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
             "SELECT create_hypertable('option_strike_snapshot', 'ts', if_not_exists => TRUE, migrate_data => TRUE)",
+            "SELECT create_hypertable('option_eod', 'trade_date', if_not_exists => TRUE, migrate_data => TRUE, chunk_time_interval => INTERVAL '90 days')",
             "CREATE INDEX IF NOT EXISTS ix_api_keys_user ON api_keys (user_id)",
             "CREATE INDEX IF NOT EXISTS ix_api_keys_hash ON api_keys (key_hash)",
             "CREATE INDEX IF NOT EXISTS ix_rl_trade_under_ts ON rl_trade (underlying, entry_ts DESC)",
             "CREATE INDEX IF NOT EXISTS ix_rl_trade_status ON rl_trade (status)",
+            "CREATE INDEX IF NOT EXISTS ix_strategies_owner ON strategies (owner_id, status)",
+            "CREATE INDEX IF NOT EXISTS ix_strategy_runs_strategy ON strategy_runs (strategy_id, strategy_version)",
+            "CREATE INDEX IF NOT EXISTS ix_strategy_runs_owner_mode ON strategy_runs (owner_id, mode, status)",
+            "CREATE INDEX IF NOT EXISTS ix_strategy_trades_run ON strategy_trades (run_id, entry_ts)",
+            "CREATE INDEX IF NOT EXISTS ix_strategy_trades_strategy ON strategy_trades (strategy_id, strategy_version)",
+            "CREATE INDEX IF NOT EXISTS ix_option_eod_under_exp ON option_eod (underlying, expiry, trade_date)",
+            """
+            CREATE TABLE IF NOT EXISTS option_intraday (
+                ts TIMESTAMP NOT NULL,
+                underlying VARCHAR NOT NULL,
+                expiry TIMESTAMP NOT NULL,
+                strike FLOAT NOT NULL,
+                option_type VARCHAR NOT NULL,
+                open FLOAT, high FLOAT, low FLOAT, close FLOAT,
+                volume BIGINT DEFAULT 0,
+                oi BIGINT DEFAULT 0,
+                oi_change BIGINT DEFAULT 0,
+                source VARCHAR DEFAULT 'unknown',
+                PRIMARY KEY (ts, underlying, expiry, strike, option_type)
+            )
+            """,
+        ):
+            try:
+                await conn.execute(text(stmt))
+            except Exception:
+                pass
+        # Hypertable for option_intraday (separate loop to handle if_not_exists)
+        for stmt in (
+            "SELECT create_hypertable('option_intraday', 'ts', if_not_exists => TRUE, migrate_data => TRUE, chunk_time_interval => INTERVAL '7 days')",
+            "CREATE INDEX IF NOT EXISTS ix_option_intraday_under_ts ON option_intraday (underlying, ts)",
         ):
             try:
                 await conn.execute(text(stmt))

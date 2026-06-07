@@ -291,10 +291,20 @@ async def backfill_underlying(
     return BackfillStats(underlying, sessions, trades, wins, losses, timeouts, cum_reward)
 
 
-# ── No-concurrent simulator + ROI ───────────────────────────────────
-# Mirrors live behaviour: at most one open trade at a time per underlying.
-# Returns a list of trade dicts so a downstream ROI pass can sequence
-# capital correctly. `train=True` calls policy.update() per closed trade.
+# ── No-concurrent simulator: thin wrapper around app.sim.engine ────
+# Same semantics, but the core loop now lives in `app/sim/engine.py`
+# and is shared with user-defined strategies. This keeps RL numbers
+# reproducible while ensuring any future engine improvement (real-
+# options pricing, MAE/MFE tracking, slippage model) benefits both
+# consumers automatically.
+
+from app.sim.engine import (
+    simulate_session as _engine_simulate_session,
+    compute_roi as _engine_compute_roi,
+    Decision as _Decision,
+    SimTrade as _SimTrade,
+)
+
 
 def _seq_simulate_session(
     candles_5m: list[list],
@@ -307,18 +317,14 @@ def _seq_simulate_session(
     train: bool = False,
     lr: float | None = None,
     weight_decay: float = 0.0,
+    seed: int | None = None,
 ) -> list[dict]:
-    if len(candles_5m) < 10:
-        return []
-    step = _strike_step(underlying)
-    trades: list[dict] = []
-    idx = 6
-    last = len(candles_5m) - 4
-    while idx < last:
-        progress = idx / len(candles_5m)
-        features = _backfill_features(candles_5m[:idx + 1], None, progress)
+    """RL-side decider: in train mode uses ε-greedy + on_close hook
+    to call Policy.update(); in test mode is greedy + conviction filter."""
+
+    def decide(features: list[float], idx: int, ctx: dict) -> _Decision:
         if train:
-            action_idx, _lp, _p = pol.act(features, epsilon, min_conviction=min_conviction)
+            action_idx, _lp, probs = pol.act(features, epsilon, min_conviction=min_conviction)
         else:
             sc = pol.scores(features)
             probs = Policy._softmax(sc)
@@ -326,46 +332,30 @@ def _seq_simulate_session(
             if action_idx in (0, 1) and min_conviction > 0:
                 if probs[action_idx] - probs[2] < min_conviction:
                     action_idx = 2
-        action = ACTIONS[action_idx]
-        if action == "FLAT":
-            idx += 1
-            continue
-        # Open synthetic ATM trade
-        spot_entry = candles_5m[idx][4]
-        strike = _atm_strike(spot_entry, step)
-        opt = "CE" if action == "LONG" else "PE"
-        T_entry = 3 / 365
-        iv = max(features[10], 0.05)
-        entry_prem = bs_price(spot_entry, strike, T_entry, 0.07, iv, opt)
-        if entry_prem <= 0.5:
-            idx += 1
-            continue
-        tp_prem = entry_prem * (1 + target_pct)
-        sl_prem = entry_prem * (1 - stop_pct)
-        status = "TIMEOUT"; exit_prem = entry_prem; exit_idx = idx
-        for j in range(idx + 1, min(idx + 30, len(candles_5m))):
-            spot_j = candles_5m[j][4]
-            T_j = max(T_entry - (j - idx) * 5 / (60 * 24 * 365), 1 / 365 / 24)
-            prem_j = bs_price(spot_j, strike, T_j, 0.07, iv, opt)
-            exit_idx = j
-            if prem_j >= tp_prem:
-                status = "TP"; exit_prem = prem_j; break
-            if prem_j <= sl_prem:
-                status = "SL"; exit_prem = prem_j; break
-            exit_prem = prem_j
-        pnl_pct = (exit_prem / entry_prem - 1.0) * 100
-        reward = reward_for(status, pnl_pct, target_pct, stop_pct)
+        return _Decision(
+            action=ACTIONS[action_idx],
+            metadata={"action_idx": action_idx, "probs": list(probs)},
+        )
+
+    def on_close(trade: _SimTrade, features: list[float]) -> None:
         if train:
-            pol.update(features, action_idx, reward, lr=lr, weight_decay=weight_decay)
-        trades.append({
-            "entry_idx": idx, "exit_idx": exit_idx,
-            "entry_prem": entry_prem, "exit_prem": exit_prem,
-            "action": action, "status": status,
-            "pnl_pct": pnl_pct, "reward": reward,
-        })
-        # ── No-concurrent rule: next entry can only happen after exit
-        idx = exit_idx + 1
-    return trades
+            pol.update(features, trade.entry_signal["action_idx"],
+                       trade.reward, lr=lr, weight_decay=weight_decay)
+
+    sim_trades = _engine_simulate_session(
+        candles_5m,
+        decide=decide, target_pct=target_pct, stop_pct=stop_pct,
+        underlying=underlying,
+        feature_extractor=lambda c, i: _backfill_features(c[:i + 1], None, i / len(c)),
+        on_close=on_close, seed=seed,
+    )
+    # Preserve old dict-shaped contract for callers in train_test_underlying
+    return [{
+        "entry_idx": t.entry_idx, "exit_idx": t.exit_idx,
+        "entry_prem": t.entry_prem, "exit_prem": t.exit_prem,
+        "action": t.action, "status": t.status,
+        "pnl_pct": t.pnl_pct, "reward": t.reward,
+    } for t in sim_trades]
 
 
 def compute_roi(
@@ -374,47 +364,28 @@ def compute_roi(
     starting_capital: float = 100_000.0,
     lot_size: int = 65,
     brokerage_per_trade: float = 50.0,
+    realistic_friction: bool = False,
 ) -> dict:
-    """Sequence trades through a capital account. Buying premium only.
-    Skips a trade if outlay exceeds available capital. Reports ROI %,
-    final capital, max drawdown, and turnover."""
-    capital = starting_capital
-    peak = starting_capital
-    max_dd = 0.0
-    taken = skipped = wins = 0
-    pnl_inr = 0.0
-    equity = [capital]
-    for t in trades:
-        outlay = t["entry_prem"] * lot_size
-        if outlay > capital:
-            skipped += 1
-            continue
-        gross = (t["exit_prem"] - t["entry_prem"]) * lot_size
-        net = gross - brokerage_per_trade
-        capital += net
-        pnl_inr += net
-        equity.append(capital)
-        taken += 1
-        if net > 0:
-            wins += 1
-        if capital > peak:
-            peak = capital
-        if peak > 0:
-            dd = (peak - capital) / peak * 100
-            if dd > max_dd:
-                max_dd = dd
-    return {
-        "starting_capital": starting_capital,
-        "final_capital": round(capital, 2),
-        "pnl_inr": round(pnl_inr, 2),
-        "roi_pct": round((capital / starting_capital - 1) * 100, 2) if starting_capital else 0.0,
-        "max_drawdown_pct": round(max_dd, 2),
-        "trades_taken": taken,
-        "trades_skipped_capital": skipped,
-        "win_rate_inr": round(wins / taken, 3) if taken else None,
-        "lot_size": lot_size,
-        "brokerage_per_trade": brokerage_per_trade,
-    }
+    """Thin wrapper around `app.sim.engine.compute_roi`.
+
+    By default keeps the original behavior (slippage=0, STT=0, exchange=0,
+    flat ₹50 brokerage) so historical RL numbers in TASKS.md stay
+    reproducible. Pass `realistic_friction=True` to apply the audited
+    slippage + tax model from the math audit doc."""
+    if realistic_friction:
+        return _engine_compute_roi(
+            trades,
+            starting_capital=starting_capital,
+            lot_size=lot_size,
+        )
+    return _engine_compute_roi(
+        trades,
+        starting_capital=starting_capital,
+        lot_size=lot_size,
+        brokerage_per_trade=brokerage_per_trade,
+        slippage_pct=0.0, stt_sell_pct=0.0,
+        exchange_pct=0.0, gst_pct=0.0,
+    )
 
 
 # ── Train / test split + holdout evaluator ─────────────────────────

@@ -17,6 +17,7 @@ import logging
 from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -247,6 +248,15 @@ async def rl_sweep_cycle() -> None:
             log.exception("RL sweep failed: %s", e)
 
 
+async def bhavcopy_daily_pull() -> None:
+    """Daily NSE F&O Bhavcopy pull. NSE publishes around 17:30 IST; we
+    fire at 18:00 IST (12:30 UTC) Mon-Fri to be safe. Idempotent — the
+    fetcher UPSERTs, so a missed day picked up the next morning rewrites
+    the same rows."""
+    from app.data.bhavcopy import daily_pull_today
+    await daily_pull_today()
+
+
 def start() -> None:
     scheduler.add_job(poll_high, "interval", seconds=settings.snapshot_interval_sec,
                       id="poll_high", max_instances=1, coalesce=True)
@@ -257,8 +267,13 @@ def start() -> None:
                       id="rl_decide", max_instances=1, coalesce=True)
     scheduler.add_job(rl_sweep_cycle, "interval", seconds=60,
                       id="rl_sweep", max_instances=1, coalesce=True)
+    # NSE Bhavcopy — 18:00 IST = 12:30 UTC, Mon-Fri
+    scheduler.add_job(bhavcopy_daily_pull,
+                      CronTrigger(day_of_week="mon-fri", hour=12, minute=30),
+                      id="bhavcopy_daily", max_instances=1, coalesce=True)
     scheduler.start()
-    log.info("scheduler started — high every %ds, low every %ds, RL decide 300s, RL sweep 60s",
+    log.info("scheduler started — high every %ds, low every %ds, RL decide 300s, "
+             "RL sweep 60s, Bhavcopy 18:00 IST Mon-Fri",
              settings.snapshot_interval_sec, max(settings.snapshot_interval_sec * 5, 300))
 
 

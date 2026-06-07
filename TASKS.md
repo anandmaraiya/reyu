@@ -297,6 +297,199 @@ expectancy on indices) holds up.
 
 ---
 
+## 🏗️ Strategy Builder Roadmap (Sprint plan, 2026-06-06)
+
+User decisions locked:
+1. **Versioning** = copy-on-edit (immutable history, every save → version+1)
+2. **Multi-symbol** = separate strategies per symbol (universe.length = 1 enforced)
+3. **Compare** = across different strategies (any N runs)
+4. **Chatbot output** = auto-save as DRAFT with transcript linked
+5. **Backtest budget** = no cap. Build symbol-wise data-lake; cache → Fyers → persist
+6. **Metrics** = default suite + extensible custom (predefined list first, DSL later)
+7. **RL is a strategy variant** (`kind=RL_BANDIT`). Algo-tier users can fork policies. RL strategies trade through `strategy_trades` (auditable); the bandit's research-mode trades stay in `rl_trade`.
+8. **Historical option data is mandatory.** Four-source data lake:
+   - L1 forward intraday (our scheduler, 2026-06-06+)
+   - L2 NSE F&O Bhavcopy EOD (multi-year, free)
+   - L3 paid intraday provider stub (deferred slot)
+   - L4 BS-synthesized fallback, tagged in `data_quality.source`
+
+### ✅ Sprint 0 — SHIPPED (2026-06-06 evening) · S0.1–S0.5 · #86, 88–89, 102–105
+
+All 7 sub-tasks done. What landed:
+
+| ID | What | Verification |
+|---|---|---|
+| S0.1 | 4 DB tables: `strategies` (composite id+version PK), `strategy_runs`, `strategy_trades`, `option_eod` (hypertable, 90d chunks). All indices. | `\dt` shows all 4 |
+| S0.2a | NSE Bhavcopy ingester `app/data/bhavcopy.py`. URL pattern + ZIP+CSV parser + UPSERT. Real archive smoke-tested 2022/2023/2024 dates → 154k rows ingested. | `POST /api/data/bhavcopy/fetch?date=2024-06-05` → 44,483 rows |
+| S0.2b | Source-priority resolver `app/fyers/cache.py::get_strike_data`. L1 → L2 → L3 (stub) → L4. Returns `source` tag on every read. | Module loads, helpers exported |
+| S0.2c | Spot candle cache `app/fyers/cache.py::get_candles`. Cache-miss → Fyers history → UPSERT tick_1m → re-read. RL backfill will now read from DB. | Endpoint passes through cleanly |
+| S0.3 | `app/strategy/spec.py::StrategySpec` — Pydantic with feature whitelist from FEATURE_NAMES, op validation, len(universe)=1 enforced, `RL_BANDIT` kind requires bandit config + ≥ pro tier. | Loads on import |
+| S0.4 | CRUD `app/routers/strategies.py`: POST / GET list / GET / PATCH (copy-on-edit) / archive / versions. Tier caps wired (free=3, pro=20, algo=∞). | Auth-gated; loads cleanly |
+| S0.5 | `app/strategy/rl_bridge.py::load_policy_for_strategy` + `bandit_decide`. RL strategies trade through `strategy_trades` with `policy_version` for audit. | Loads on import |
+
+**Coverage now sitting in DB** (sample):
+- 2022-06-03: 62,867 option EOD rows (208 underlyings)
+- 2023-06-05: 47,022 rows
+- 2024-06-05: 44,483 rows
+- → run multi-day backfill via `POST /api/data/bhavcopy/backfill?start=...&end=...` to fill remaining range. 5-year backfill ≈ 1,250 days × ~1.5s per day = ~30 min.
+
+**Two ops to run before Sprint 1:**
+1. `POST /api/data/bhavcopy/backfill?start=2019-01-01&end=2024-12-31` (background) — 5y EOD multi-underlying history banked
+2. Update `app/scheduler.py` to call `bhavcopy.daily_pull_today()` at 18:00 IST every weekday (single one-liner, defer to S1 prep)
+
+### ✅ Sprint 1 — SHIPPED (2026-06-07 morning) · S1.1–S1.5 · #90–94
+
+End-to-end strategy backtest pipeline live. Same simulator powers both
+RL bandit and user strategies; same friction model applies to both.
+
+| ID | What | Verification |
+|---|---|---|
+| S1.1 | `app/sim/engine.py` — shared `simulate_session` + `compute_roi`. `Decision` / `SimTrade` dataclasses. Pluggable `decide`, `pricer`, `feature_extractor`, `on_close`. Seed param threaded (closes NU-12a). | RL backtest still works post-refactor (smoke test) |
+| S1.2 | `app/strategy/conditions.py` — ops `> < >= <= == between crosses_above crosses_below`, IST schedule with day + time-window check. `entry_allowed` facade returns (bool, reason) for run logs. | Imports cleanly |
+| S1.3 | `app/strategy/runner.py` — `start_backtest_run` + `execute_run`. Loops trading days via cache layer, drives `simulate_session` per day, persists trades + metrics + equity_curve + data_quality. Handles both CONDITIONAL and RL_BANDIT kinds via `_build_decider`. | Test backtest: 62 trades persisted, full equity curve |
+| S1.4 | Endpoints `POST /runs`, `GET /runs/{id}`, `GET /{strategy_id}/runs`, `GET /runs/{id}/trades`. Background task fires `execute_run`. Status transitions DRAFT → BACKTESTED on first completed run. | All endpoints respond |
+| S1.5 | Default metric suite: total_trades, win_rate, roi_pct, max_dd, sharpe, profit_factor, avg_winner/loser, expectancy, longest streaks, fees. Slippage + STT + exchange + GST friction model (closes NU-12b — ROI numbers now realistic by default). | Test run shows all metrics |
+
+Sample trade from test backtest demonstrates full provenance:
+```json
+{
+  "id": "797c1019-…",
+  "entry_ts": "2026-06-05T06:17:50",
+  "exit_ts":  "2026-06-05T06:18:27",
+  "entry_signal": {"reason": "conditions-met", "entry_unix": …},
+  "exit_reason": "TP",
+  "legs": [{"action": "BUY", "qty": 65, "entry_price": 48.67,
+            "exit_price": 64.10, "fees_inr": 130.99}],
+  "gross_pnl_inr": 1002.47,  "pnl_pct": 31.686,
+  "mae_pct": -6.956,  "mfe_pct": 31.686
+}
+```
+
+**Sprint 1 incidental fixes:**
+- `bhavcopy.fetch_one` now wraps the CSV parse in `asyncio.to_thread` —
+  the parse was blocking the event loop on 30-40k row files, choking
+  HTTP traffic during backfill. Backfill now coexists with live API.
+- `rl/backfill.py::compute_roi` now delegates to `sim/engine.compute_roi`
+  with `realistic_friction=False` default to preserve existing RL numbers.
+  Pass `realistic_friction=True` to get honest slippage + tax math.
+
+**Closed by Sprint 1 (carry-over from earlier):**
+- NU-12a — seed parameter threaded universally through the engine
+- NU-12b — slippage / tax-correct ROI model is now the default in
+  `engine.compute_roi`
+
+**Backfill running again (resumed after CSV-parse fix):**
+`POST /api/data/bhavcopy/backfill?start=2019-01-01&end=2024-12-31` in background.
+
+### Sprint 0 — original task plan (kept for context, now ✅)
+
+
+Schema + four-source data-lake + spec validation + CRUD API + RL bridge.
+**Blocking everything else.** Data-lake is the architectural pivot —
+every read from here on flows through it.
+
+- **S0.1** Schema for `strategies` (id+version composite, `kind` field for
+  CONDITIONAL vs RL_BANDIT), `strategy_runs` (config_snapshot JSON,
+  metrics JSON, custom_metrics JSON, equity_curve JSON, data_quality
+  JSON), `strategy_trades` (legs JSON, entry_signal JSON, MAE/MFE)
+- **S0.2a** ⭐ NSE F&O Bhavcopy ingester — daily cron + initial 5-year
+  backfill into new `option_eod` table. Unlocks multi-year EOD swing
+  backtests immediately.
+- **S0.2b** ⭐ Source-priority resolver `app/fyers/cache.py`: L1 → L2 → L3
+  → L4. Every returned bar carries `source` tag; backtest runner reports
+  source mix per run.
+- **S0.2c** Spot candle backfill via Fyers `history` UPSERTed into
+  `tick_1m`. RL training reads from DB only after this — eliminates
+  Fyers rate-limit choke on tune sweeps (also closes most of NU-8).
+- **S0.3** Pydantic `StrategySpec` — feature whitelist from FEATURE_NAMES,
+  validated ops, enforce `len(universe) == 1`, kind validation
+- **S0.4** CRUD: POST/GET/PATCH (creates version+1)/archive, tier caps
+- **S0.5** RL strategy kind + auditable bridge — `kind=RL_BANDIT` references
+  existing `rl_policy`. All RL strategy trades land in `strategy_trades`
+  with `policy_version` + `entry_signal` for audit.
+
+### Sprint 1 — Backtest core (4–5 days) · S1.1–S1.5 · #90–94
+
+**This sprint unifies the simulator across RL + user strategies — biggest
+architectural win.** Same code-path computes both bandit holdouts and
+user backtests after this.
+
+- **S1.1** Refactor `_seq_simulate_session` + `compute_roi` →
+  `app/sim/engine.py` taking `decide(features) → Action` callable.
+  Seed param threaded through (closes NU-12a / #83). RL bandit becomes
+  one concrete `decide`; strategy condition evaluator becomes another.
+- **S1.2** `app/strategy/conditions.py` — ops: >, <, >=, <=, ==, between,
+  crosses_above, crosses_below + schedule check
+- **S1.3** `app/strategy/runner.py` orchestrates: spec → simulator →
+  trades → run row
+- **S1.4** POST `/api/strategies/{id}/runs` (async background, returns
+  run_id immediately) + status polling endpoints
+- **S1.5** Default metrics + slippage/tax-correct friction (closes NU-12b)
+
+### Sprint 2 — Frontend list + detail (4 days) · S2.1–S2.4 · #95
+
+- `/strategies` list — cards with name, status, mode, latest run KPIs
+- `/strategies/:id` — Recipe / Performance / Runs / Trades tabs
+- Visual leg builder, equity curve, trade ledger with CSV export
+
+### Sprint 3 — Chatbot agent (3 days) · S3 · #96
+
+- Strategy-builder system prompt elicits universe → legs → entry → exit → risk
+- Tools: `create_strategy`, `list_my_strategies`, `backtest_strategy`
+- Chat transcript linked to created DRAFT for traceability
+
+### Sprint 4 — Paper-live + risk gates (4 days) · S4.1–S4.3 · #97–99
+
+- **S4.1** Scheduler subscribes PAPER_LIVE strategies, fires every 1 min,
+  trades into `strategy_trades` with `mode=PAPER`. Reuses RL sweep cycle
+  for TP/SL detection.
+- **S4.2** Single pre-trade risk gate function: max_concurrent /
+  max_daily_loss_inr / max_position_inr / max_drawdown_pct
+- **S4.3** Run state machine (RUNNING/HALTED/COMPLETED/ERRORED), kill
+  switch, Live Monitor tab
+
+### Sprint 5 — Compare + custom metrics (3 days) · S5 · #100
+
+- POST `/api/strategies/compare` with `[run_id…]` across any strategies
+- Aligned equity curves + side-by-side metric table on a `/strategies/compare` page
+- Phase 1 custom metrics: pick from extended list (Calmar, Sortino, Ulcer,
+  win/loss ratio). Phase 2 DSL deferred.
+
+### Sprint 6 — LIVE real money (4 days, LAST) · S6 · #101
+
+- Algo tier gate + per-strategy "I confirm real money" double opt-in
+- Hard risk caps (max_daily_loss capped at 10 % of pro-rated)
+- Full audit log + Telegram/email per fill
+- **No-go until paper-live has clean 2-week track record**
+
+### Critical-path dependencies
+
+```
+S0.1 ─┬─► S0.4 ─► S0.5 ─► S1.4 ─► S2.* ─► S3 ─► S4.* ─► S5 ─► S6
+S0.2a┤
+S0.2b┤
+S0.2c┤
+S0.3 ─┘
+       S1.1 ─► S1.2 ─► S1.3 ─► S1.4
+              S1.5 ─► (parallel with S1.3)
+```
+
+S0 has no incoming dependencies — four engineers could parallelise the
+six sub-tasks. S0.2a/b/c can land independently. S0.5 depends on S0.1.
+S1.1 (shared simulator) is the bottleneck once S0 lands; S1.2/1.3/1.5
+all need it.
+
+### Sprint 0 readiness checklist
+
+- [ ] User decisions locked (✅ above, including #7 RL strategy + #8 four-source data lake)
+- [ ] JSON shapes agreed (✅ in chat history)
+- [ ] Migration strategy: additive only, no destructive DDL — existing RL tables untouched
+- [ ] Data-lake invariant: every Fyers / NSE / paid-provider read goes through `app/fyers/cache.py` from S0.2 onward. PRs that bypass it get rejected at review.
+- [ ] **`option_eod` table created and Bhavcopy backfill running** — once this is in, even Sprint 1 backtests have multi-year EOD coverage for swing strategies; only intraday strategies need to wait for L1 forward accumulation.
+- [ ] Every backtest run reports `data_quality.source_mix` so reports never lie about provenance.
+
+---
+
 ## 📋 Backlog (no specific order)
 
 - White-label / embed widget for B2B Algo tier (`/embed/chain?symbol=…`)
