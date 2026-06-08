@@ -60,7 +60,19 @@ type Trade = {
   mfe_pct: number | null
 }
 
-type Tab = 'recipe' | 'performance' | 'runs' | 'trades'
+type Tab = 'recipe' | 'performance' | 'runs' | 'trades' | 'live'
+
+type LiveMonitor = {
+  active_run: { id: string; mode: string; status: string; started_at: string } | null
+  open_positions: { id: string; entry_ts: string; leg: any }[]
+  today: {
+    fills: number
+    open: number
+    closed: number
+    wins: number
+    realised_pnl_inr: number
+  }
+}
 
 export default function StrategyDetail() {
   const { id = '' } = useParams()
@@ -202,7 +214,7 @@ export default function StrategyDetail() {
             borderBottom: '1px solid var(--border)',
           }}
         >
-          {(['recipe', 'performance', 'runs', 'trades'] as Tab[]).map((t) => (
+          {(['recipe', 'performance', 'runs', 'trades', 'live'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -249,7 +261,207 @@ export default function StrategyDetail() {
               run={selRun}
             />
           )}
+          {tab === 'live' && <LiveTab strategyId={id} strategy={strat} />}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Live Monitor tab ────────────────────────────────────────────────
+function LiveTab({
+  strategyId,
+  strategy,
+}: {
+  strategyId: string
+  strategy: Strategy
+}) {
+  const qc = useQueryClient()
+  const toast = useToast()
+  const { data, isLoading } = useQuery<LiveMonitor>({
+    queryKey: ['live-monitor', strategyId],
+    queryFn: async () =>
+      (await api.get(`/api/strategies/${strategyId}/live-monitor`)).data,
+    refetchInterval: 5000,
+  })
+
+  const promote = useMutation({
+    mutationFn: () =>
+      api.post(`/api/strategies/${strategyId}/promote?mode=PAPER_LIVE`),
+    onSuccess: () => {
+      toast.show('Promoted to PAPER_LIVE — scheduler will start firing trades', 'success')
+      qc.invalidateQueries({ queryKey: ['strategy', strategyId] })
+    },
+    onError: (e: any) =>
+      toast.show(e?.response?.data?.detail || 'Promote failed', 'error'),
+  })
+
+  const halt = useMutation({
+    mutationFn: () =>
+      api.post(
+        `/api/strategies/runs/${data?.active_run?.id}/halt`,
+      ),
+    onSuccess: () => {
+      toast.show('Halted — open positions exited at last price', 'success')
+      qc.invalidateQueries({ queryKey: ['live-monitor', strategyId] })
+      qc.invalidateQueries({ queryKey: ['strategy', strategyId] })
+    },
+    onError: (e: any) =>
+      toast.show(e?.response?.data?.detail || 'Halt failed', 'error'),
+  })
+
+  if (isLoading) return <div style={{ color: 'var(--muted)' }}>Loading…</div>
+
+  const isLive = strategy.status === 'PAPER_LIVE' || strategy.status === 'LIVE'
+
+  return (
+    <div>
+      {/* Header strip */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: 14,
+          padding: 12,
+          background: isLive ? '#2da14b22' : 'var(--card2)',
+          borderRadius: 6,
+          border: `1px solid ${isLive ? '#2da14b' : 'var(--border)'}`,
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            Strategy status
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>{strategy.status}</div>
+        </div>
+        {!isLive && strategy.status === 'BACKTESTED' && (
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              if (confirm('Promote to PAPER_LIVE? Scheduler will fire paper trades every minute during market hours.'))
+                promote.mutate()
+            }}
+          >
+            Go Paper-Live
+          </button>
+        )}
+        {isLive && data?.active_run?.id && (
+          <button
+            className="btn"
+            style={{ background: '#e54848', color: '#fff' }}
+            onClick={() => {
+              if (confirm('Halt this run? All open positions will exit at last-known price.'))
+                halt.mutate()
+            }}
+          >
+            🛑 Halt Run
+          </button>
+        )}
+      </div>
+
+      {/* Today KPIs */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+          gap: 10,
+          marginBottom: 14,
+        }}
+      >
+        <KPI label="Today's fills" value={num(data?.today.fills, 0)} />
+        <KPI label="Open now" value={num(data?.today.open, 0)} />
+        <KPI label="Closed" value={num(data?.today.closed, 0)} />
+        <KPI
+          label="Wins / closed"
+          value={
+            data?.today.closed
+              ? `${data.today.wins} / ${data.today.closed}`
+              : '—'
+          }
+        />
+        <KPI
+          label="Realised ₹"
+          value={num(data?.today.realised_pnl_inr, 0)}
+          accent={
+            (data?.today.realised_pnl_inr ?? 0) >= 0 ? '#2da14b' : '#e54848'
+          }
+        />
+      </div>
+
+      {/* Active run */}
+      {data?.active_run ? (
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--muted)',
+            marginBottom: 10,
+          }}
+        >
+          Active run · {data.active_run.mode} · started{' '}
+          {new Date(data.active_run.started_at).toLocaleString()} ·{' '}
+          status{' '}
+          <b style={{ color: 'var(--text)' }}>{data.active_run.status}</b>
+        </div>
+      ) : (
+        <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
+          No active paper or live run.
+        </div>
+      )}
+
+      {/* Open positions */}
+      <Section title={`Open positions (${data?.open_positions.length ?? 0})`}>
+        {data?.open_positions.length ? (
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                {['Entry', 'Symbol', 'Qty', 'Entry ₹'].map((h) => (
+                  <th
+                    key={h}
+                    style={{
+                      textAlign: 'right',
+                      padding: '6px 8px',
+                      color: 'var(--muted)',
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.open_positions.map((p) => (
+                <tr
+                  key={p.id}
+                  style={{ borderBottom: '1px solid var(--border)' }}
+                >
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                    {new Date(p.entry_ts).toLocaleString()}
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                    {p.leg?.symbol || '—'}
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                    {p.leg?.qty || '—'}
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                    {num(p.leg?.entry_price, 2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ color: 'var(--muted)', fontSize: 12 }}>
+            No open positions.
+          </div>
+        )}
+      </Section>
+
+      <div
+        style={{ marginTop: 12, fontSize: 11, color: 'var(--muted)' }}
+      >
+        ⟳ auto-refreshes every 5 s
       </div>
     </div>
   )

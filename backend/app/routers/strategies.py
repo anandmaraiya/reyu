@@ -206,6 +206,156 @@ async def update_strategy(
     return {"ok": True, **_row_to_dict(new_row)}
 
 
+# ── POST /api/strategies/runs/{run_id}/halt ────────────────────────
+@router.post("/runs/{run_id}/halt")
+async def halt_run(
+    request: Request,
+    run_id: str,
+    s: AsyncSession = Depends(get_session),
+):
+    """Stop a RUNNING paper or live run cleanly.
+    - Marks any open strategy_trades as MANUAL exit at last-known price
+    - Flips run.status to HALTED
+    - Does NOT touch RLTrade rows (those are bandit-owned)"""
+    owner = _owner(request)
+    run = (await s.execute(
+        select(StrategyRun).where(
+            StrategyRun.id == run_id, StrategyRun.owner_id == owner,
+        )
+    )).scalar_one_or_none()
+    if not run:
+        raise HTTPException(404, "Run not found")
+    if run.status != "RUNNING":
+        raise HTTPException(409, f"Run already in `{run.status}` state.")
+
+    opens = (await s.execute(
+        select(StrategyTrade).where(
+            StrategyTrade.run_id == run_id,
+            StrategyTrade.exit_ts.is_(None),
+        )
+    )).scalars().all()
+    for t in opens:
+        legs = json.loads(t.legs or "[]")
+        if legs and legs[0].get("exit_price") is None:
+            legs[0]["exit_price"] = legs[0].get("entry_price")
+            t.legs = json.dumps(legs)
+        t.exit_ts = datetime.utcnow()
+        t.exit_reason = "MANUAL"
+        t.gross_pnl_inr = 0.0
+        t.pnl_pct = 0.0
+
+    run.status = "HALTED"
+    run.ended_at = datetime.utcnow()
+    await s.commit()
+
+    # Cascade: flip parent strategy from LIVE/PAPER_LIVE back to BACKTESTED
+    if run.mode in ("PAPER", "LIVE"):
+        strat = (await s.execute(
+            select(Strategy).where(
+                Strategy.id == run.strategy_id,
+                Strategy.version == run.strategy_version,
+            )
+        )).scalar_one_or_none()
+        if strat and strat.status in ("PAPER_LIVE", "LIVE"):
+            strat.status = "BACKTESTED"
+            await s.commit()
+
+    return {"ok": True, "run_id": run_id, "halted_trades": len(opens),
+            "status": "HALTED"}
+
+
+# ── POST /api/strategies/{id}/promote ──────────────────────────────
+@router.post("/{strategy_id}/promote")
+async def promote_strategy(
+    request: Request,
+    strategy_id: str,
+    mode: str = Query(..., regex="^(PAPER_LIVE|LIVE)$"),
+    confirm: bool = Query(False, description="Required for LIVE mode"),
+    s: AsyncSession = Depends(get_session),
+):
+    """Flip a BACKTESTED strategy to PAPER_LIVE or LIVE.
+    PAPER_LIVE just enables the scheduler to subscribe. LIVE requires
+    `confirm=true` and (future) algo-tier."""
+    owner = _owner(request)
+    v = await _latest_version(s, strategy_id)
+    if v is None:
+        raise HTTPException(404, "Strategy not found")
+    row = (await s.execute(
+        select(Strategy).where(
+            Strategy.id == strategy_id, Strategy.version == v,
+            Strategy.owner_id == owner,
+        )
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Strategy not found")
+
+    if mode == "LIVE":
+        if not confirm:
+            raise HTTPException(400,
+                "LIVE mode requires confirm=true and an algo-tier account.")
+        tier = _tier(request)
+        if tier != "algo":
+            raise HTTPException(403, "LIVE mode requires `algo` tier.")
+
+    if row.status not in ("BACKTESTED", "PAPER_LIVE"):
+        raise HTTPException(409,
+            f"Can't promote from `{row.status}`. Backtest the strategy first.")
+
+    row.status = mode
+    await s.commit()
+    return {"ok": True, "id": strategy_id, "status": mode}
+
+
+# ── GET /api/strategies/{id}/live-monitor ──────────────────────────
+@router.get("/{strategy_id}/live-monitor")
+async def live_monitor(
+    request: Request,
+    strategy_id: str,
+    s: AsyncSession = Depends(get_session),
+):
+    """Today's paper/live snapshot — open positions, today's fills, MTM PnL."""
+    owner = _owner(request)
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Most recent active run
+    run = (await s.execute(
+        select(StrategyRun).where(
+            StrategyRun.strategy_id == strategy_id,
+            StrategyRun.owner_id == owner,
+            StrategyRun.mode.in_(["PAPER", "LIVE"]),
+        ).order_by(desc(StrategyRun.started_at)).limit(1)
+    )).scalar_one_or_none()
+
+    today_fills = (await s.execute(
+        select(StrategyTrade).where(
+            StrategyTrade.strategy_id == strategy_id,
+            StrategyTrade.entry_ts >= today_start,
+        ).order_by(desc(StrategyTrade.entry_ts))
+    )).scalars().all()
+
+    open_now = [t for t in today_fills if t.exit_ts is None]
+    closed = [t for t in today_fills if t.exit_ts is not None]
+    realised = sum(t.gross_pnl_inr or 0 for t in closed)
+
+    return {
+        "active_run": {
+            "id": run.id, "mode": run.mode, "status": run.status,
+            "started_at": run.started_at.isoformat(),
+        } if run else None,
+        "open_positions": [{
+            "id": t.id, "entry_ts": t.entry_ts.isoformat(),
+            "leg": json.loads(t.legs or "[]")[0] if t.legs else None,
+        } for t in open_now],
+        "today": {
+            "fills": len(today_fills),
+            "open": len(open_now),
+            "closed": len(closed),
+            "wins": sum(1 for t in closed if (t.gross_pnl_inr or 0) > 0),
+            "realised_pnl_inr": round(realised, 2),
+        },
+    }
+
+
 # ── POST /api/strategies/{id}/archive ──────────────────────────────
 @router.post("/{strategy_id}/archive")
 async def archive_strategy(
