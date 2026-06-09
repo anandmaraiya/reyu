@@ -83,6 +83,63 @@ class OptionStrikeSnapshot(Base):
     __table_args__ = (Index("ix_strike_snap_under_ts", "underlying", "ts"),)
 
 
+class FyersOrder(Base):
+    """Snapshot of Fyers orderBook entries. PK includes snapshot_date so the
+    table grows by ~one-row-per-(order, day-seen). Captured at 15:35 IST
+    daily before the orderbook rolls over to the next session."""
+    __tablename__ = "fyers_orders"
+    snapshot_date = Column(DateTime, primary_key=True)        # date of the snapshot
+    order_id = Column(String, primary_key=True)
+    symbol = Column(String)
+    qty = Column(Integer)
+    filled_qty = Column(Integer)
+    remaining_qty = Column(Integer)
+    side = Column(Integer)                                    # 1=BUY -1=SELL
+    order_type = Column(Integer)                              # 1=Limit 2=Market 3=SL-M 4=SL-L
+    product_type = Column(String)
+    status = Column(Integer)                                  # Fyers numeric status
+    status_message = Column(String)
+    limit_price = Column(Float)
+    stop_price = Column(Float)
+    avg_price = Column(Float)
+    order_ts = Column(DateTime)
+    raw = Column(String)                                      # full JSON
+
+
+class FyersTrade(Base):
+    """Snapshot of Fyers tradeBook entries — executed fills."""
+    __tablename__ = "fyers_trades"
+    snapshot_date = Column(DateTime, primary_key=True)
+    order_id = Column(String, primary_key=True)
+    trade_number = Column(String, primary_key=True)
+    symbol = Column(String)
+    qty = Column(Integer)
+    side = Column(Integer)
+    price = Column(Float)
+    product_type = Column(String)
+    trade_value = Column(Float)
+    exchange_order_no = Column(String)
+    trade_ts = Column(DateTime)
+    raw = Column(String)
+
+
+class FyersPosition(Base):
+    """Daily snapshot of net positions at 15:35 IST."""
+    __tablename__ = "fyers_positions"
+    snapshot_date = Column(DateTime, primary_key=True)
+    symbol = Column(String, primary_key=True)
+    product_type = Column(String, primary_key=True)
+    net_qty = Column(Integer)
+    buy_qty = Column(Integer)
+    sell_qty = Column(Integer)
+    buy_avg = Column(Float)
+    sell_avg = Column(Float)
+    realized_pnl = Column(Float)
+    unrealized_pnl = Column(Float)
+    ltp = Column(Float)
+    raw = Column(String)
+
+
 class OptionContract1m(Base):
     """Per-contract 1-min OHLCV+OI history. Mirrors `tick_1m` but for option
     legs. Populated by the Fyers history endpoint (~100 days back at 1-min
@@ -516,6 +573,49 @@ async def init_db() -> None:
                 mae_pct FLOAT,
                 mfe_pct FLOAT,
                 policy_version VARCHAR
+            )
+        """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fyers_orders (
+                snapshot_date TIMESTAMP NOT NULL,
+                order_id VARCHAR NOT NULL,
+                symbol VARCHAR,
+                qty INTEGER, filled_qty INTEGER, remaining_qty INTEGER,
+                side INTEGER, order_type INTEGER,
+                product_type VARCHAR,
+                status INTEGER, status_message VARCHAR,
+                limit_price FLOAT, stop_price FLOAT, avg_price FLOAT,
+                order_ts TIMESTAMP,
+                raw TEXT,
+                PRIMARY KEY (snapshot_date, order_id)
+            )
+        """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fyers_trades (
+                snapshot_date TIMESTAMP NOT NULL,
+                order_id VARCHAR NOT NULL,
+                trade_number VARCHAR NOT NULL,
+                symbol VARCHAR,
+                qty INTEGER, side INTEGER,
+                price FLOAT, product_type VARCHAR,
+                trade_value FLOAT,
+                exchange_order_no VARCHAR,
+                trade_ts TIMESTAMP,
+                raw TEXT,
+                PRIMARY KEY (snapshot_date, order_id, trade_number)
+            )
+        """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fyers_positions (
+                snapshot_date TIMESTAMP NOT NULL,
+                symbol VARCHAR NOT NULL,
+                product_type VARCHAR NOT NULL,
+                net_qty INTEGER, buy_qty INTEGER, sell_qty INTEGER,
+                buy_avg FLOAT, sell_avg FLOAT,
+                realized_pnl FLOAT, unrealized_pnl FLOAT,
+                ltp FLOAT,
+                raw TEXT,
+                PRIMARY KEY (snapshot_date, symbol, product_type)
             )
         """))
         await conn.execute(text("""

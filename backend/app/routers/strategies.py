@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from typing import List
 from app.db import get_session, Strategy, StrategyRun, StrategyTrade
 from app.strategy.spec import StrategySpec, TIER_CAPS
 from app.strategy.runner import start_backtest_run, execute_run
@@ -514,6 +515,72 @@ async def list_run_trades(
         "pnl_pct": t.pnl_pct,
         "mae_pct": t.mae_pct, "mfe_pct": t.mfe_pct,
     } for t in rows]}
+
+
+# ── POST /api/strategies/compare ───────────────────────────────────
+@router.post("/compare")
+async def compare_runs(
+    request: Request,
+    run_ids: List[str],
+    s: AsyncSession = Depends(get_session),
+):
+    """Side-by-side compare of N runs from any strategies the caller owns.
+    Returns aligned equity curves (normalised to common length) + a
+    metric matrix for the KPI table."""
+    if not run_ids:
+        raise HTTPException(400, "Provide at least one run_id")
+    if len(run_ids) > 10:
+        raise HTTPException(400, "Max 10 runs per compare")
+
+    owner = _owner(request)
+    rows = (await s.execute(
+        select(StrategyRun, Strategy).join(
+            Strategy,
+            (Strategy.id == StrategyRun.strategy_id) &
+            (Strategy.version == StrategyRun.strategy_version),
+        ).where(
+            StrategyRun.id.in_(run_ids),
+            StrategyRun.owner_id == owner,
+        )
+    )).all()
+
+    out_runs = []
+    for run, strat in rows:
+        metrics = json.loads(run.metrics or "{}")
+        curve = json.loads(run.equity_curve or "[]")
+        out_runs.append({
+            "run_id": run.id,
+            "strategy_id": run.strategy_id,
+            "strategy_name": strat.name,
+            "strategy_version": run.strategy_version,
+            "mode": run.mode,
+            "status": run.status,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "ended_at": run.ended_at.isoformat() if run.ended_at else None,
+            "params": json.loads(run.params or "{}"),
+            "metrics": metrics,
+            "equity_curve": [
+                {"step": i, "ts": p.get("ts"), "equity": p.get("equity")}
+                for i, p in enumerate(curve)
+            ],
+        })
+
+    # Metric matrix — every metric across every run, side-by-side
+    all_metrics: set[str] = set()
+    for r in out_runs:
+        all_metrics.update((r.get("metrics") or {}).keys())
+    metric_matrix = []
+    for m in sorted(all_metrics):
+        row = {"metric": m}
+        for r in out_runs:
+            row[r["run_id"][:8]] = (r.get("metrics") or {}).get(m)
+        metric_matrix.append(row)
+
+    return {
+        "count": len(out_runs),
+        "runs": out_runs,
+        "metric_matrix": metric_matrix,
+    }
 
 
 # ── GET /api/strategies/{id}/versions ──────────────────────────────

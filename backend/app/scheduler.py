@@ -268,6 +268,27 @@ async def bhavcopy_daily_pull() -> None:
     await daily_pull_today()
 
 
+async def fyers_eod_snapshot() -> None:
+    """15:35 IST snapshot of Fyers orderBook / tradeBook / positions.
+    These endpoints are current-day only — snapshot or lose forever."""
+    from app.data.fyers_sync import snapshot_today
+    try:
+        res = await snapshot_today()
+        log.info("fyers EOD snapshot: %s", res)
+    except Exception as e:
+        log.exception("fyers EOD snapshot failed: %s", e)
+
+
+async def morning_batch_job() -> None:
+    """08:00 IST data catch-up: Bhavcopy + option_contract_1m + tick_1m."""
+    from app.data.morning_batch import run_morning_batch
+    try:
+        res = await run_morning_batch()
+        log.info("morning batch: %s", res)
+    except Exception as e:
+        log.exception("morning batch failed: %s", e)
+
+
 def start() -> None:
     scheduler.add_job(poll_high, "interval", seconds=settings.snapshot_interval_sec,
                       id="poll_high", max_instances=1, coalesce=True)
@@ -285,6 +306,14 @@ def start() -> None:
     scheduler.add_job(bhavcopy_daily_pull,
                       CronTrigger(day_of_week="mon-fri", hour=12, minute=30),
                       id="bhavcopy_daily", max_instances=1, coalesce=True)
+    # Fyers EOD snapshot — 15:35 IST = 10:05 UTC, Mon-Fri (must run before rollover)
+    scheduler.add_job(fyers_eod_snapshot,
+                      CronTrigger(day_of_week="mon-fri", hour=10, minute=5),
+                      id="fyers_eod_snapshot", max_instances=1, coalesce=True)
+    # Morning batch — 08:00 IST = 02:30 UTC, Mon-Fri (pre-market catch-up)
+    scheduler.add_job(morning_batch_job,
+                      CronTrigger(day_of_week="mon-fri", hour=2, minute=30),
+                      id="morning_batch", max_instances=1, coalesce=True)
     scheduler.start()
     log.info("scheduler started — high every %ds, low every %ds, RL decide 300s, "
              "RL sweep 60s, Bhavcopy 18:00 IST Mon-Fri",

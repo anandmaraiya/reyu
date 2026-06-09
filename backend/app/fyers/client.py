@@ -82,6 +82,30 @@ async def positions() -> dict[str, Any]:
     return await run_in_threadpool(m.positions)
 
 
+async def orderbook() -> dict[str, Any]:
+    """Current-day order book. Fyers does not expose historical orders;
+    snapshot at 15:35 IST or it's lost."""
+    m = await _model()
+    if m is None:
+        return {"s": "ok", "code": 0, "orderBook": []}
+    return await run_in_threadpool(m.orderbook)
+
+
+async def tradebook() -> dict[str, Any]:
+    """Current-day executed trades. Same constraint as orderbook."""
+    m = await _model()
+    if m is None:
+        return {"s": "ok", "code": 0, "tradeBook": []}
+    return await run_in_threadpool(m.tradebook)
+
+
+async def funds() -> dict[str, Any]:
+    m = await _model()
+    if m is None:
+        return {"s": "ok", "code": 0, "fund_limit": []}
+    return await run_in_threadpool(m.funds)
+
+
 async def place_order(order: dict[str, Any]) -> dict[str, Any]:
     m = await _model()
     return await run_in_threadpool(m.place_order, data=order)

@@ -14,6 +14,7 @@ import Login from './pages/Login'
 import Saved from './pages/Saved'
 import Strategies from './pages/Strategies'
 import StrategyDetail from './pages/StrategyDetail'
+import StrategyCompare from './pages/StrategyCompare'
 import Audit from './pages/Audit'
 import Compare from './pages/Compare'
 import Settings from './pages/Settings'
@@ -98,7 +99,14 @@ export default function App() {
     refetchInterval: 10000,
   })
 
-  const pageTitle = useMemo(() => PAGE_TITLE_MAP[location.pathname] ?? 'Dashboard', [location.pathname])
+  const pageTitle = useMemo(() => {
+    const p = location.pathname
+    if (PAGE_TITLE_MAP[p]) return PAGE_TITLE_MAP[p]
+    // Dynamic sub-routes
+    if (p === '/strategies/compare') return 'Compare Strategies'
+    if (p.startsWith('/strategies/')) return 'Strategy Detail'
+    return 'Dashboard'
+  }, [location.pathname])
   const breadcrumb = useMemo(() => ['Home', pageTitle], [pageTitle])
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
@@ -210,6 +218,7 @@ export default function App() {
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/strategy" element={<Strategy />} />
                 <Route path="/strategies" element={<Strategies />} />
+                <Route path="/strategies/compare" element={<StrategyCompare />} />
                 <Route path="/strategies/:id" element={<StrategyDetail />} />
                 <Route path="/chat" element={<Chat />} />
                 <Route path="/backtest" element={<Backtest />} />

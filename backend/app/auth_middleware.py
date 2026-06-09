@@ -43,6 +43,9 @@ _PUBLIC_PATHS = [
     re.compile(r"^/api/rl/"),              # RL trading engine (paper trades, read-only inspection)
     re.compile(r"^/api/data/snapshot-health"),  # pipeline health probe (no PII)
     re.compile(r"^/api/data/bhavcopy/"),         # historical EOD ingest (admin-ish, fine)
+    re.compile(r"^/api/data/option-history/"),   # Fyers per-contract 1m history backfill
+    re.compile(r"^/api/data/morning-batch"),     # manual daily batch trigger
+    re.compile(r"^/api/data/fyers/"),            # snapshot + state read
     re.compile(r"^/api/backtest-eod/"),          # EOD Bhavcopy validation harness
     # NOTE: /api/strategies stays behind auth — strategies are user-owned.
 ]
@@ -69,6 +72,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Only intercept /api/* routes
         if not path.startswith("/api/"):
+            return await call_next(request)
+
+        # Never block CORS preflight — the browser never sends a
+        # Bearer token on the OPTIONS check. Let it through to the
+        # CORS middleware to answer with Access-Control-Allow-* headers.
+        if request.method == "OPTIONS":
             return await call_next(request)
 
         # Allow public paths through
