@@ -98,6 +98,12 @@ async def _save_tick(symbol: str) -> None:
 
 
 async def _save_snapshot(symbol: str) -> None:
+    # SAFEGUARD: when Fyers is unauthed, fy.option_chain returns mock
+    # data. Persisting that pollutes downstream charts + RL training
+    # with bogus prices. Skip the entire poll when in demo mode — better
+    # to lose a minute than store fake numbers.
+    if await fy.is_demo():
+        return
     # Chain fetch with 3-attempt exponential backoff. Fyers throttles
     # under burst load; without this, ~5-15 % of tier-1 polls return
     # empty during volatile periods and we lose that minute's snapshot
