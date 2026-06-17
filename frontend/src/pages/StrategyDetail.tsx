@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -64,13 +64,22 @@ type Tab = 'recipe' | 'performance' | 'runs' | 'trades' | 'live'
 
 type LiveMonitor = {
   active_run: { id: string; mode: string; status: string; started_at: string } | null
-  open_positions: { id: string; entry_ts: string; leg: any }[]
+  open_positions: {
+    id: string
+    entry_ts: string
+    leg: any
+    current_ltp: number | null
+    unrealised_inr: number | null
+    unrealised_pct: number | null
+  }[]
   today: {
     fills: number
     open: number
     closed: number
     wins: number
     realised_pnl_inr: number
+    unrealised_pnl_inr: number
+    total_pnl_inr: number
   }
 }
 
@@ -257,8 +266,9 @@ export default function StrategyDetail() {
           )}
           {tab === 'trades' && (
             <TradesTab
-              trades={trades?.items || []}
-              run={selRun}
+              strategyId={id}
+              strategy={strat}
+              runs={runsList || []}
             />
           )}
           {tab === 'live' && <LiveTab strategyId={id} strategy={strat} />}
@@ -387,6 +397,20 @@ function LiveTab({
             (data?.today.realised_pnl_inr ?? 0) >= 0 ? '#2da14b' : '#e54848'
           }
         />
+        <KPI
+          label="Unrealised ₹"
+          value={num(data?.today.unrealised_pnl_inr, 0)}
+          accent={
+            (data?.today.unrealised_pnl_inr ?? 0) >= 0 ? '#2da14b' : '#e54848'
+          }
+        />
+        <KPI
+          label="Total P&L ₹"
+          value={num(data?.today.total_pnl_inr, 0)}
+          accent={
+            (data?.today.total_pnl_inr ?? 0) >= 0 ? '#2da14b' : '#e54848'
+          }
+        />
       </div>
 
       {/* Active run */}
@@ -415,7 +439,7 @@ function LiveTab({
           <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                {['Entry', 'Symbol', 'Qty', 'Entry ₹'].map((h) => (
+                {['Entry', 'Symbol', 'Qty', 'Entry ₹', 'Current ₹', 'Unreal %', 'Unreal ₹'].map((h) => (
                   <th
                     key={h}
                     style={{
@@ -446,6 +470,25 @@ function LiveTab({
                   </td>
                   <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                     {num(p.leg?.entry_price, 2)}
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                    {num(p.current_ltp, 2)}
+                  </td>
+                  <td
+                    style={{
+                      padding: '6px 8px', textAlign: 'right', fontWeight: 600,
+                      color: (p.unrealised_pct ?? 0) >= 0 ? '#2da14b' : '#e54848',
+                    }}
+                  >
+                    {p.unrealised_pct != null ? `${num(p.unrealised_pct, 2)}%` : '—'}
+                  </td>
+                  <td
+                    style={{
+                      padding: '6px 8px', textAlign: 'right', fontWeight: 600,
+                      color: (p.unrealised_inr ?? 0) >= 0 ? '#2da14b' : '#e54848',
+                    }}
+                  >
+                    {num(p.unrealised_inr, 0)}
                   </td>
                 </tr>
               ))}
@@ -772,113 +815,378 @@ function RunsTab({
 
 // ── Trades tab ─────────────────────────────────────────────────────
 function TradesTab({
-  trades,
-  run,
+  strategyId,
+  strategy,
+  runs,
 }: {
-  trades: Trade[]
-  run: Run | undefined
+  strategyId: string
+  strategy: Strategy
+  runs: Run[]
 }) {
-  if (!run)
+  // Default: expand the most recent run only
+  const [expanded, setExpanded] = useState<Set<string>>(
+    () => new Set(runs[0] ? [runs[0].id] : []),
+  )
+
+  // Auto-expand the latest run on first arrival
+  useEffect(() => {
+    if (runs.length && expanded.size === 0) {
+      setExpanded(new Set([runs[0].id]))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runs.length])
+
+  if (!runs.length) {
     return (
       <div style={{ color: 'var(--muted)' }}>
-        Select a run from the Runs tab first.
+        No runs yet. Click <b>Run Backtest</b> above or promote to PAPER_LIVE
+        to start seeing trades.
       </div>
     )
-  if (trades.length === 0)
-    return (
-      <div style={{ color: 'var(--muted)' }}>
-        No trades fired in this run.
-      </div>
-    )
+  }
+
+  const toggle = (rid: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(rid)) next.delete(rid); else next.add(rid)
+      return next
+    })
+  }
 
   return (
-    <div style={{ overflow: 'auto' }}>
-      <table
+    <div>
+      {runs.map((r) => (
+        <RunTradesGroup
+          key={r.id}
+          run={r}
+          strategy={strategy}
+          strategyId={strategyId}
+          isExpanded={expanded.has(r.id)}
+          onToggle={() => toggle(r.id)}
+        />
+      ))}
+    </div>
+  )
+}
+
+function RunTradesGroup({
+  run,
+  strategy,
+  strategyId,
+  isExpanded,
+  onToggle,
+}: {
+  run: Run
+  strategy: Strategy
+  strategyId: string
+  isExpanded: boolean
+  onToggle: () => void
+}) {
+  // Lazy-fetch trades only when expanded; live-mode runs refetch every 5s
+  const isLive = run.mode === 'PAPER' || run.mode === 'LIVE'
+  const { data: tradesData } = useQuery<{ count: number; items: Trade[] }>({
+    queryKey: ['run-trades', run.id],
+    queryFn: async () =>
+      (await api.get(`/api/strategies/runs/${run.id}/trades?limit=500`)).data,
+    enabled: isExpanded,
+    refetchInterval: isExpanded && isLive ? 5000 : false,
+  })
+
+  const items = tradesData?.items || []
+  const m = run.metrics || {}
+  const modeColor =
+    run.mode === 'LIVE'
+      ? '#e54848'
+      : run.mode === 'PAPER'
+        ? '#f0a830'
+        : '#4a9fda'
+  const statusColor =
+    run.status === 'RUNNING'
+      ? '#2da14b'
+      : run.status === 'COMPLETED'
+        ? '#4a9fda'
+        : run.status === 'HALTED'
+          ? '#888'
+          : '#e54848'
+
+  // Compute on-the-fly aggregates for live runs (DB metrics may be stale)
+  const totalPnl =
+    items.reduce((s, t) => s + (t.gross_pnl_inr ?? 0), 0) || m.fees_paid_inr
+  const wins = items.filter((t) => t.exit_reason === 'TP').length
+  const losses = items.filter((t) => t.exit_reason === 'SL').length
+  const opens = items.filter((t) => !t.exit_ts).length
+
+  return (
+    <div
+      style={{
+        border: '1px solid var(--border)',
+        borderRadius: 6,
+        marginBottom: 8,
+        overflow: 'hidden',
+      }}
+    >
+      {/* Header — clickable to expand */}
+      <div
+        onClick={onToggle}
         style={{
-          width: '100%',
-          borderCollapse: 'collapse',
-          fontSize: 12,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '10px 14px',
+          cursor: 'pointer',
+          background: isExpanded ? 'var(--card2)' : 'transparent',
+          borderBottom: isExpanded ? '1px solid var(--border)' : 'none',
         }}
       >
-        <thead>
-          <tr style={{ borderBottom: '1px solid var(--border)' }}>
-            {[
-              'Entry',
-              'Exit',
-              'Reason',
-              'Qty',
-              'Entry ₹',
-              'Exit ₹',
-              'P&L %',
-              'P&L ₹',
-              'MAE %',
-              'MFE %',
-            ].map((h) => (
-              <th
-                key={h}
+        <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+          {isExpanded ? '▾' : '▸'}
+        </span>
+        <span
+          style={{
+            background: modeColor,
+            color: '#fff',
+            padding: '2px 8px',
+            borderRadius: 10,
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: 0.5,
+          }}
+        >
+          {run.mode}
+        </span>
+        <span
+          style={{
+            background: statusColor,
+            color: '#fff',
+            padding: '2px 8px',
+            borderRadius: 10,
+            fontSize: 10,
+            fontWeight: 600,
+          }}
+        >
+          {run.status}
+        </span>
+        <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+          {new Date(run.started_at).toLocaleString()}
+        </span>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+          strategy: <b style={{ color: 'var(--text)' }}>{strategy.name}</b> v{strategy.version}
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+          trades: <b style={{ color: 'var(--text)' }}>{m.total_trades ?? items.length}</b>
+        </span>
+        {opens > 0 && (
+          <span style={{ fontSize: 11, color: '#f0a830', fontWeight: 600 }}>
+            {opens} open
+          </span>
+        )}
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            color: (m.roi_pct ?? 0) >= 0 ? '#2da14b' : '#e54848',
+          }}
+        >
+          ROI {m.roi_pct != null ? `${num(m.roi_pct, 2)}%` : '—'}
+        </span>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            color: (totalPnl ?? 0) >= 0 ? '#2da14b' : '#e54848',
+          }}
+        >
+          ₹{num(totalPnl, 0)}
+        </span>
+      </div>
+
+      {/* Body */}
+      {isExpanded && (
+        <div style={{ overflowX: 'auto', padding: 8 }}>
+          {!tradesData ? (
+            <div style={{ color: 'var(--muted)', padding: 12, fontSize: 12 }}>
+              Loading trades…
+            </div>
+          ) : items.length === 0 ? (
+            <div style={{ color: 'var(--muted)', padding: 12, fontSize: 12 }}>
+              No trades fired in this run yet.
+              {run.status === 'RUNNING' &&
+                ' (live — auto-refreshes every 5 s)'}
+            </div>
+          ) : (
+            <>
+              <table
                 style={{
-                  textAlign: 'right',
-                  padding: '6px 8px',
-                  color: 'var(--muted)',
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  fontSize: 12,
                 }}
               >
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {trades.map((t) => {
-            const leg = t.legs?.[0] || {}
-            const pnlColor =
-              (t.pnl_pct ?? 0) >= 0 ? '#2da14b' : '#e54848'
-            return (
-              <tr key={t.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
-                  {new Date(t.entry_ts).toLocaleString()}
-                </td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
-                  {t.exit_ts ? new Date(t.exit_ts).toLocaleString() : '—'}
-                </td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
-                  {t.exit_reason}
-                </td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
-                  {leg.qty}
-                </td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
-                  {num(leg.entry_price)}
-                </td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
-                  {num(leg.exit_price)}
-                </td>
-                <td
-                  style={{
-                    padding: '4px 8px',
-                    textAlign: 'right',
-                    color: pnlColor,
-                    fontWeight: 600,
-                  }}
-                >
-                  {t.pnl_pct != null ? `${num(t.pnl_pct, 2)}%` : '—'}
-                </td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
-                  {num(t.gross_pnl_inr, 0)}
-                </td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
-                  {t.mae_pct != null ? `${num(t.mae_pct, 1)}%` : '—'}
-                </td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>
-                  {t.mfe_pct != null ? `${num(t.mfe_pct, 1)}%` : '—'}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--muted)' }}>
-        Showing {trades.length} trades. Export CSV: coming soon.
-      </div>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    {[
+                      'Entry',
+                      'Exit',
+                      'Symbol',
+                      'Side',
+                      'Reason',
+                      'Qty',
+                      'Entry ₹',
+                      'Exit ₹',
+                      'P&L %',
+                      'P&L ₹',
+                      'MAE %',
+                      'MFE %',
+                    ].map((h, i) => (
+                      <th
+                        key={h}
+                        style={{
+                          textAlign: i < 4 ? 'left' : 'right',
+                          padding: '6px 8px',
+                          color: 'var(--muted)',
+                          fontWeight: 600,
+                          fontSize: 10,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.4,
+                        }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((t) => {
+                    const leg = t.legs?.[0] || ({} as any)
+                    const pnlColor =
+                      (t.pnl_pct ?? 0) >= 0 ? '#2da14b' : '#e54848'
+                    const open = !t.exit_ts
+                    return (
+                      <tr
+                        key={t.id}
+                        style={{
+                          borderBottom: '1px solid var(--border)',
+                          background: open ? '#f0a83015' : 'transparent',
+                        }}
+                      >
+                        <td style={{ padding: '4px 8px' }}>
+                          {new Date(t.entry_ts).toLocaleTimeString()}
+                          <div
+                            style={{ fontSize: 10, color: 'var(--muted)' }}
+                          >
+                            {new Date(t.entry_ts).toLocaleDateString()}
+                          </div>
+                        </td>
+                        <td style={{ padding: '4px 8px' }}>
+                          {open
+                            ? <span style={{ color: '#f0a830', fontWeight: 600 }}>OPEN</span>
+                            : new Date(t.exit_ts!).toLocaleTimeString()}
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                          }}
+                        >
+                          {leg.symbol || '—'}
+                        </td>
+                        <td style={{ padding: '4px 8px' }}>
+                          <span
+                            style={{
+                              background:
+                                leg.action === 'BUY' ? '#2da14b22' : '#e5484822',
+                              color: leg.action === 'BUY' ? '#2da14b' : '#e54848',
+                              padding: '1px 6px',
+                              borderRadius: 4,
+                              fontSize: 10,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {leg.action || '—'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '4px 8px' }}>
+                          <span
+                            style={{
+                              fontSize: 10,
+                              color:
+                                t.exit_reason === 'TP'
+                                  ? '#2da14b'
+                                  : t.exit_reason === 'SL'
+                                    ? '#e54848'
+                                    : 'var(--muted)',
+                              fontWeight: 600,
+                            }}
+                          >
+                            {t.exit_reason || (open ? '—' : '?')}
+                          </span>
+                        </td>
+                        <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                          {leg.qty}
+                        </td>
+                        <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                          {num(leg.entry_price)}
+                        </td>
+                        <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                          {open ? '—' : num(leg.exit_price)}
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                            color: pnlColor,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {t.pnl_pct != null ? `${num(t.pnl_pct, 2)}%` : '—'}
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                            fontWeight: 600,
+                            color: pnlColor,
+                          }}
+                        >
+                          {num(t.gross_pnl_inr, 0)}
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                            color: 'var(--muted)',
+                          }}
+                        >
+                          {t.mae_pct != null ? `${num(t.mae_pct, 1)}%` : '—'}
+                        </td>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            textAlign: 'right',
+                            color: 'var(--muted)',
+                          }}
+                        >
+                          {t.mfe_pct != null ? `${num(t.mfe_pct, 1)}%` : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              <div
+                style={{ marginTop: 10, fontSize: 11, color: 'var(--muted)' }}
+              >
+                Run id: <code>{run.id.slice(0, 8)}</code> · {items.length} trades
+                · TP {wins} · SL {losses}
+                {isLive && run.status === 'RUNNING' &&
+                  ' · ⟳ auto-refresh 5s'}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }

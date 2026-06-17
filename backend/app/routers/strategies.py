@@ -338,21 +338,67 @@ async def live_monitor(
     closed = [t for t in today_fills if t.exit_ts is not None]
     realised = sum(t.gross_pnl_inr or 0 for t in closed)
 
+    # ── Mark-to-market live LTPs for open positions ─────────────
+    # Pull current quotes in one call so the front-end can show real-time
+    # unrealised P&L without per-position network round-trips.
+    open_enriched = []
+    mtm_unrealised = 0.0
+    if open_now:
+        from app.fyers import client as fy
+        legs_by_tid: dict[str, dict] = {}
+        symbols: list[str] = []
+        for t in open_now:
+            legs = json.loads(t.legs or "[]")
+            leg = legs[0] if legs else None
+            legs_by_tid[t.id] = leg
+            if leg and leg.get("symbol"):
+                symbols.append(leg["symbol"])
+        ltp_map: dict[str, float | None] = {s: None for s in symbols}
+        if symbols:
+            try:
+                q = await fy.quotes(symbols)
+                # Fyers v3: {'d': [{'n': symbol, 'v': {'lp': ltp, ...}}]}
+                for item in (q.get("d") or []):
+                    name = item.get("n")
+                    v = item.get("v") or {}
+                    ltp = v.get("lp") or v.get("ltp")
+                    if name and ltp is not None:
+                        ltp_map[name] = float(ltp)
+            except Exception:
+                pass
+
+        for t in open_now:
+            leg = legs_by_tid.get(t.id)
+            ltp = ltp_map.get(leg["symbol"]) if leg else None
+            entry = leg.get("entry_price") if leg else None
+            qty = leg.get("qty") if leg else None
+            unreal_inr = unreal_pct = None
+            if ltp is not None and entry and qty:
+                unreal_inr = round((ltp - entry) * qty, 2)
+                unreal_pct = round((ltp / entry - 1) * 100, 3)
+                mtm_unrealised += unreal_inr
+            open_enriched.append({
+                "id": t.id, "entry_ts": t.entry_ts.isoformat(),
+                "leg": leg,
+                "current_ltp": ltp,
+                "unrealised_inr": unreal_inr,
+                "unrealised_pct": unreal_pct,
+            })
+
     return {
         "active_run": {
             "id": run.id, "mode": run.mode, "status": run.status,
             "started_at": run.started_at.isoformat(),
         } if run else None,
-        "open_positions": [{
-            "id": t.id, "entry_ts": t.entry_ts.isoformat(),
-            "leg": json.loads(t.legs or "[]")[0] if t.legs else None,
-        } for t in open_now],
+        "open_positions": open_enriched,
         "today": {
             "fills": len(today_fills),
             "open": len(open_now),
             "closed": len(closed),
             "wins": sum(1 for t in closed if (t.gross_pnl_inr or 0) > 0),
             "realised_pnl_inr": round(realised, 2),
+            "unrealised_pnl_inr": round(mtm_unrealised, 2),
+            "total_pnl_inr": round(realised + mtm_unrealised, 2),
         },
     }
 

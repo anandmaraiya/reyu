@@ -257,7 +257,15 @@ async def _build_decider(spec: StrategySpec, period_start: date):
         policy, meta = loaded
         min_conv = spec.bandit.min_conviction
 
+        # Bandit policy was trained with FEATURE_DIM (30); the strategy
+        # runner's default extractor returns 18 dims (chain dims absent
+        # during historical backtest). Pad zeros for missing dims so the
+        # policy can score the vector — bandit weights for zero-padded
+        # dims simply contribute 0 to the score.
+        from app.rl.features import FEATURE_DIM as POLICY_DIM
         def _bandit_decide(features, idx, ctx):
+            if len(features) < POLICY_DIM:
+                features = list(features) + [0.0] * (POLICY_DIM - len(features))
             res = bandit_decide(policy, features, min_conv, epsilon=0.0)
             return Decision(action=res["action"], metadata=res)
         return _bandit_decide

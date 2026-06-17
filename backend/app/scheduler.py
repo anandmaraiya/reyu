@@ -150,13 +150,16 @@ async def _save_snapshot(symbol: str) -> None:
         ).on_conflict_do_nothing()
         await s.execute(stmt)
 
-        # Per-strike snapshot — ATM ± 10 strikes so future RL training has
+        # Per-strike snapshot — ATM ± 15 strikes so future RL training has
         # real per-leg OI / IV / premium history (not just aggregates).
+        # Widened from ±10 to ±15 to keep OTM8/OTM9 wing strikes inside
+        # the visible band even when NIFTY drifts mid-day — the iron-
+        # condor intraday replay was losing wing tracking with ±10.
         atm = summary.get("atm_strike")
         sorted_strikes = sorted(chain["strikes"], key=lambda r: r["strike"])
         atm_idx = next((i for i, r in enumerate(sorted_strikes) if r["strike"] == atm), -1)
         if atm_idx >= 0:
-            window = sorted_strikes[max(0, atm_idx - 10): atm_idx + 11]
+            window = sorted_strikes[max(0, atm_idx - 15): atm_idx + 16]
             for row in window:
                 ce = row.get("ce") or {}
                 pe = row.get("pe") or {}
@@ -295,6 +298,49 @@ async def morning_batch_job() -> None:
         log.exception("morning batch failed: %s", e)
 
 
+async def daily_options_history_job() -> None:
+    """09:00 IST daily backfill of per-contract 1-min option history.
+
+    Runs JUST BEFORE market open (15min) so the live week's expiry has
+    fresh history for any strategy that consumes option_contract_1m.
+
+    Uses the corruption-resistant `backfill_underlying` (window-clamp +
+    spot-substitution rejection). For each tier-1 underlying it pulls
+    7 days of intraday history — short window keeps the call budget
+    well inside Fyers rate limits.
+    """
+    from app.data import option_history
+    from app.fyers import client as fy
+
+    if await fy.is_demo():
+        log.info("daily options history: skipped — Fyers in demo mode")
+        return
+
+    targets = [
+        "NSE:NIFTY50-INDEX",
+        "NSE:NIFTYBANK-INDEX",
+        "NSE:FINNIFTY-INDEX",
+    ]
+    out: dict = {}
+    for u in targets:
+        try:
+            r = await option_history.backfill_underlying(
+                u, history_back_days=7,
+                forward_weeklies=2, strikes_around_atm=10,
+                polite_delay_sec=0.3,
+            )
+            out[u] = {
+                "inserted": r.get("candles_inserted"),
+                "tainted_rejected": r.get("contracts_tainted_spot_substitution"),
+                "dead_skipped": r.get("contracts_dead_before_window"),
+                "failed": r.get("contracts_failed"),
+            }
+        except Exception as e:
+            out[u] = {"error": str(e)}
+            log.exception("daily options history %s failed", u)
+    log.info("daily options history: %s", out)
+
+
 def start() -> None:
     scheduler.add_job(poll_high, "interval", seconds=settings.snapshot_interval_sec,
                       id="poll_high", max_instances=1, coalesce=True)
@@ -320,6 +366,13 @@ def start() -> None:
     scheduler.add_job(morning_batch_job,
                       CronTrigger(day_of_week="mon-fri", hour=2, minute=30),
                       id="morning_batch", max_instances=1, coalesce=True)
+    # Daily options-1m history — 09:00 IST = 03:30 UTC, Mon-Fri
+    # Runs JUST BEFORE 09:15 IST market open so live-week contracts have
+    # fresh per-strike intraday data. Tighter window (7 days) than the
+    # 08:00 morning_batch — this is the "everyday at 9am onwards" refresh.
+    scheduler.add_job(daily_options_history_job,
+                      CronTrigger(day_of_week="mon-fri", hour=3, minute=30),
+                      id="daily_options_history", max_instances=1, coalesce=True)
     scheduler.start()
     log.info("scheduler started — high every %ds, low every %ds, RL decide 300s, "
              "RL sweep 60s, Bhavcopy 18:00 IST Mon-Fri",

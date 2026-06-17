@@ -22,7 +22,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import SessionLocal, OptionEod
+from app.db import SessionLocal, OptionEod, RLPolicy
 from app.rl.policy import Policy, ACTIONS
 from app.rl.features import FEATURE_DIM as POLICY_DIM
 from app.sim.engine import reward_for, compute_roi
@@ -180,9 +180,14 @@ async def train_test_eod_bandit(
     starting_capital: float = 100_000,
     lot_size: int = 65,
     seed: int | None = None,
+    persist: bool = False,
 ) -> dict:
     """End-to-end: fit a policy on `train_*`, evaluate read-only on `test_*`.
-    Reports train + test metrics and a fitted weight dump."""
+    Reports train + test metrics and a fitted weight dump.
+
+    If `persist=True`, upserts the fitted Policy into `rl_policy` (keyed
+    by underlying). The live RL_BANDIT strategy reads from there, so this
+    is how a trained EOD policy gets shipped."""
     if seed is not None:
         random.seed(seed)
 
@@ -257,6 +262,28 @@ async def train_test_eod_bandit(
     roi = compute_roi(test_trades, starting_capital=starting_capital,
                       lot_size=lot_size)
 
+    persisted = False
+    if persist:
+        async with SessionLocal() as s2:
+            row = (await s2.execute(
+                select(RLPolicy).where(RLPolicy.underlying == underlying)
+            )).scalar_one_or_none()
+            if row is None:
+                row = RLPolicy(underlying=underlying, epsilon=epsilon, enabled=True)
+                s2.add(row)
+            row.weights = pol.to_json()
+            row.epsilon = epsilon
+            row.target_pct = target_pct
+            row.stop_pct = stop_pct
+            row.last_trained_at = datetime.utcnow()
+            row.n_trades = (row.n_trades or 0) + train_n_trades
+            row.n_wins = (row.n_wins or 0) + wins
+            row.enabled = True
+            await s2.commit()
+        persisted = True
+        log.info("eod_bandit: persisted policy for %s (train_n=%d, test_n=%d, test_roi=%.2f%%)",
+                 underlying, train_n_trades, n, roi.get("roi_pct", 0))
+
     return {
         "underlying": underlying,
         "train_window": [train_start.isoformat(), train_end.isoformat()],
@@ -276,4 +303,5 @@ async def train_test_eod_bandit(
         "b_long": pol.b_long,
         "b_short": pol.b_short,
         "baseline": pol.baseline,
+        "persisted_to_rl_policy": persisted,
     }
