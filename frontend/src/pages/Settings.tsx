@@ -43,6 +43,34 @@ export default function Settings({ theme, setTheme }: { theme: string; setTheme:
     catch { return DEFAULT_RISK }
   })
 
+  // Password change state
+  const [pwCurrent, setPwCurrent] = useState('')
+  const [pwNew, setPwNew] = useState('')
+  const [pwConfirm, setPwConfirm] = useState('')
+  const [pwBusy, setPwBusy] = useState(false)
+
+  const changePassword = async () => {
+    if (pwNew.length < 8) { t.push('error', 'New password must be ≥ 8 characters'); return }
+    if (pwNew !== pwConfirm) { t.push('error', 'Passwords do not match'); return }
+    setPwBusy(true)
+    try {
+      await api.post('/api/user/change-password', { current_password: pwCurrent, new_password: pwNew })
+      t.push('success', 'Password changed — please log in again on other devices')
+      setPwCurrent(''); setPwNew(''); setPwConfirm('')
+    } catch (e: any) {
+      t.push('error', e.response?.data?.detail || 'Failed to change password')
+    } finally { setPwBusy(false) }
+  }
+
+  const reAuthFyers = async () => {
+    try {
+      const { data } = await api.get('/api/auth/login')
+      if (data.login_url) window.location.href = data.login_url
+    } catch {
+      t.push('error', 'Could not get Fyers login URL — is the backend running?')
+    }
+  }
+
   const currentUser = (() => {
     try { return JSON.parse(localStorage.getItem('user') || 'null') } catch { return null }
   })()
@@ -96,22 +124,62 @@ export default function Settings({ theme, setTheme }: { theme: string; setTheme:
         {/* Tab body */}
         <section className="col" style={{ flex: 1, minWidth: 0 }}>
           {tab === 'account' && (
-            <div className="card" style={{ maxWidth: 640 }}>
-              <h3>Account & Connectivity</h3>
-              <table>
-                <tbody>
-                  <tr><td>Fyers</td><td className={status?.fyers ? 'bull' : 'bear'}>{status?.fyers ? 'connected (live)' : 'demo mode'}</td></tr>
-                  <tr><td>Redis</td><td className={status?.redis ? 'bull' : 'bear'}>{status?.redis ? 'ok' : 'down'}</td></tr>
-                  <tr><td>Postgres</td><td className={status?.postgres ? 'bull' : 'bear'}>{status?.postgres ? 'ok' : 'down'}</td></tr>
-                  <tr><td>Last snapshot</td><td>{status?.last_snapshot_at ? new Date(status.last_snapshot_at).toLocaleString() : '—'}</td></tr>
-                  <tr><td>Tracked symbols</td><td>{status?.tracked_symbols ?? 0}</td></tr>
-                  <tr><td>Subscription</td><td><span className="tag" style={{ background: 'rgba(96,165,250,.15)', color: 'var(--accent)' }}>{tierLabel}</span></td></tr>
-                </tbody>
-              </table>
-              <div className="row" style={{ marginTop: 12, gap: 8 }}>
-                <a className="primary" href="/login" style={{ padding: '6px 12px', textDecoration: 'none' }}>Re-authenticate Fyers</a>
-                <a className="ghost" href="/subscription" style={{ padding: '6px 12px', textDecoration: 'none' }}>Manage subscription</a>
+            <div className="col" style={{ gap: 16, maxWidth: 640 }}>
+              {/* System status card */}
+              <div className="card">
+                <h3>Account & Connectivity</h3>
+                <table>
+                  <tbody>
+                    <tr><td>Fyers</td><td className={status?.fyers ? 'bull' : 'bear'}>{status?.fyers ? 'connected (live)' : 'demo mode'}</td></tr>
+                    <tr><td>Redis</td><td className={status?.redis ? 'bull' : 'bear'}>{status?.redis ? 'ok' : 'down'}</td></tr>
+                    <tr><td>Postgres</td><td className={status?.postgres ? 'bull' : 'bear'}>{status?.postgres ? 'ok' : 'down'}</td></tr>
+                    <tr><td>Last snapshot</td><td>{status?.last_snapshot_at ? new Date(status.last_snapshot_at).toLocaleString() : '—'}</td></tr>
+                    <tr><td>Tracked symbols</td><td>{status?.tracked_symbols ?? 0}</td></tr>
+                    <tr><td>Subscription</td><td><span className="tag" style={{ background: 'rgba(96,165,250,.15)', color: 'var(--accent)' }}>{tierLabel}</span></td></tr>
+                  </tbody>
+                </table>
+                <div className="row" style={{ marginTop: 12, gap: 8 }}>
+                  <button className="primary" onClick={reAuthFyers}>Re-authenticate Fyers</button>
+                  <a className="ghost" href="/subscription" style={{ padding: '6px 12px', textDecoration: 'none' }}>Manage subscription</a>
+                </div>
               </div>
+
+              {/* Password change card */}
+              {currentUser && (
+                <div className="card">
+                  <h3>Change Password</h3>
+                  <div className="col" style={{ gap: 10 }}>
+                    <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+                      <label style={{ minWidth: 160 }}>Current password</label>
+                      <input className="input" type="password" value={pwCurrent}
+                             onChange={e => setPwCurrent(e.target.value)}
+                             placeholder="••••••••" style={{ flex: 1 }} />
+                    </div>
+                    <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+                      <label style={{ minWidth: 160 }}>New password</label>
+                      <input className="input" type="password" value={pwNew}
+                             onChange={e => setPwNew(e.target.value)}
+                             placeholder="Min 8 characters" style={{ flex: 1 }} />
+                    </div>
+                    <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+                      <label style={{ minWidth: 160 }}>Confirm new password</label>
+                      <input className="input" type="password" value={pwConfirm}
+                             onChange={e => setPwConfirm(e.target.value)}
+                             placeholder="Repeat password" style={{ flex: 1 }}
+                             onKeyDown={e => { if (e.key === 'Enter') changePassword() }} />
+                    </div>
+                    <div style={{ marginTop: 4 }}>
+                      <button className="primary" onClick={changePassword}
+                              disabled={pwBusy || !pwCurrent || !pwNew || !pwConfirm}>
+                        {pwBusy ? 'Saving…' : 'Update password'}
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                      Changing your password will invalidate existing sessions on all other devices.
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

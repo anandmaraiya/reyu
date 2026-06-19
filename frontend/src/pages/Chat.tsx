@@ -1,376 +1,266 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
-import { api } from '../api'
+/**
+ * Chat.tsx — Reyu AI Agent (main screen).
+ */
+import React, {
+  useState, useEffect, useRef, useCallback, FormEvent, KeyboardEvent,
+} from 'react'
+import { api } from '../context/AuthContext'
+import { useAuth } from '../context/AuthContext'
+import { StrategyLifecycleStrip } from '../components/ResponseCard'
+import type { StrategyStage } from '../components/ResponseCard'
+import '../styles/chat.css'
 
-type Msg = {
+interface Message {
+  id: string
   role: 'user' | 'assistant'
   content: string
-  tool?: string
-  tool_args?: any
-  data?: any
-  chart?: string
-  chart_inline?: string
-  chart_post?: { url: string; body: any }
-  ts?: string
+  chart?: string | null
+  chart_inline?: string | null
+  data?: Record<string, any> | null
+  ts: string
+  tool?: string | null
+  pinned?: boolean
+}
+interface Starter { icon: string; text: string }
+interface TrayItem { id: string; query: string; summary: string }
+interface NudgeChip { id: string; icon: string; text: string; query: string; live?: boolean }
+
+function renderMarkdown(text: string): React.ReactNode[] {
+  const lines = text.split('\n')
+  const nodes: React.ReactNode[] = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    if (line.startsWith('```')) {
+      const code: string[] = []; i++
+      while (i < lines.length && !lines[i].startsWith('```')) { code.push(lines[i]); i++ }
+      nodes.push(<pre key={i}><code>{code.join('\n')}</code></pre>); i++; continue
+    }
+    if (line.match(/^[-*•]\s/)) {
+      const items: string[] = []
+      while (i < lines.length && lines[i].match(/^[-*•]\s/)) { items.push(lines[i].replace(/^[-*•]\s/, '')); i++ }
+      nodes.push(<ul key={i}>{items.map((it, j) => <li key={j}>{fmt(it)}</li>)}</ul>); continue
+    }
+    if (line.match(/^\d+\.\s/)) {
+      const items: string[] = []
+      while (i < lines.length && lines[i].match(/^\d+\.\s/)) { items.push(lines[i].replace(/^\d+\.\s/, '')); i++ }
+      nodes.push(<ol key={i}>{items.map((it, j) => <li key={j}>{fmt(it)}</li>)}</ol>); continue
+    }
+    if (!line.trim()) { nodes.push(<br key={i} />); i++; continue }
+    nodes.push(<p key={i}>{fmt(line)}</p>); i++
+  }
+  return nodes
+}
+function fmt(text: string): React.ReactNode {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/).map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) return <strong key={i}>{part.slice(2,-2)}</strong>
+    if (part.startsWith('`')  && part.endsWith('`'))  return <code key={i}>{part.slice(1,-1)}</code>
+    return part
+  })
 }
 
-type SessionInfo = {
-  session_id: string
-  last_message: string
-  last_ts: string
-  message_count: number
-}
-
-const PROMPTS = [
-  "What's the NIFTY bias today?",
-  "Show me PCR + max-pain for BANKNIFTY",
-  "Suggest a hedge for selling NIFTY ATM CE",
-  "Any scalping setups in F&O Liquid?",
-  "Compare watchlist 'F&O Liquid'",
-  "Show my open positions",
-  "Show me NIFTY OI chart",
-  "Show me NIFTY IV smile",
-  "Show me NIFTY payoff chart",
-]
-
-const SESSION_STORAGE_KEY = 'reyu_chat_session_id'
-
-function getStoredSessionId(): string | null {
-  try { return localStorage.getItem(SESSION_STORAGE_KEY) } catch { return null }
-}
-
-function storeSessionId(sid: string) {
-  try { localStorage.setItem(SESSION_STORAGE_KEY, sid) } catch { /* noop */ }
-}
+const SESSION_KEY = 'reyu_chat_session_id'
 
 export default function Chat() {
-  const [messages, setMessages] = useState<Msg[]>([])
-  const [input, setInput] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [sessionId, setSessionId] = useState<string | null>(getStoredSessionId())
-  const [showSidebar, setShowSidebar] = useState(false)
-  const [sessions, setSessions] = useState<SessionInfo[]>([])
-  const scrollRef = useRef<HTMLDivElement>(null)
-
-  // Load initial welcome message or restore session history
-  useEffect(() => {
-    if (sessionId) {
-      // Try to restore history from server
-      api.get(`/api/chat/sessions/${sessionId}`).then(({ data }) => {
-        if (data.messages && data.messages.length > 0) {
-          const restored: Msg[] = data.messages.map((m: any) => ({
-            role: m.role,
-            content: m.content,
-          }))
-          setMessages(restored)
-        } else {
-          setMessages(welcomeMsg())
-        }
-      }).catch(() => {
-        // Session expired or invalid, start fresh
-        setSessionId(null)
-        localStorage.removeItem(SESSION_STORAGE_KEY)
-        setMessages(welcomeMsg())
-      })
-    } else {
-      setMessages(welcomeMsg())
-    }
-  }, [])
+  const { user, openGate } = useAuth()
+  const [messages, setMessages]   = useState<Message[]>([])
+  const [input, setInput]         = useState('')
+  const [loading, setLoading]     = useState(false)
+  const [sessionId, setSessionId] = useState<string | null>(() => sessionStorage.getItem(SESSION_KEY))
+  const [starters, setStarters]   = useState<Starter[]>([])
+  const [tray, setTray]           = useState<TrayItem[]>([])
+  const [nudges, setNudges]       = useState<NudgeChip[]>([])
+  const threadRef = useRef<HTMLDivElement>(null)
+  const inputRef  = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages])
+    api.get('/api/chat/starters').then(r => setStarters(r.data.starters || [])).catch(() => {
+      setStarters([
+        { icon: '📊', text: "What's the current NIFTY option chain telling us?" },
+        { icon: '🔥', text: 'Find unusual OI buildup in BANKNIFTY' },
+        { icon: '⚡', text: 'Build me a quick scalp setup for today' },
+        { icon: '📈', text: 'Should I sell straddle or strangle this expiry?' },
+      ])
+    })
+  }, [user?.email])
 
-  const welcomeMsg = (): Msg[] => [{
-    role: 'assistant',
-    content: "Hi — I'm your options co-pilot. Ask about PCR, bias, hedges, scalping, payoffs, or positions. Try one of the chips below or type your own.",
-  }]
+  useEffect(() => {
+    api.get('/api/rl/paper-trades').then(r => {
+      setNudges((r.data.trades || []).slice(0, 3).map((t: any) => ({
+        id: t.id || String(Math.random()),
+        icon: t.side === 'BUY' ? '📈' : '📉',
+        text: `RL: ${t.side} ${t.symbol?.split(':')[1] ?? t.symbol}`,
+        query: `Tell me about the RL paper trade signal on ${t.symbol}`,
+        live: true,
+      })))
+    }).catch(() => {})
+  }, [user?.email])
+
+  useEffect(() => {
+    const el = threadRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages, loading])
+
+  useEffect(() => {
+    const ta = inputRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'
+  }, [input])
 
   const send = useCallback(async (text: string) => {
-    if (!text.trim() || busy) return
-    setBusy(true)
+    const trimmed = text.trim()
+    if (!trimmed || loading) return
+    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', content: trimmed, ts: new Date().toISOString() }])
     setInput('')
-    const userMsg: Msg = { role: 'user', content: text }
-    setMessages(m => [...m, userMsg])
+    setLoading(true)
     try {
-      const { data } = await api.post('/api/chat', {
-        message: text,
-        session_id: sessionId,
-        history: messages.slice(-8).map(m => ({ role: m.role, content: m.content })),
-      })
-      // Update session_id from server response
-      if (data.session_id && data.session_id !== sessionId) {
-        setSessionId(data.session_id)
-        storeSessionId(data.session_id)
+      const resp = await api.post('/api/chat', { message: trimmed, session_id: sessionId || undefined })
+      const d = resp.data
+      if (d.session_id && d.session_id !== sessionId) { setSessionId(d.session_id); sessionStorage.setItem(SESSION_KEY, d.session_id) }
+      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: d.text || '', chart: d.chart ?? null, chart_inline: d.chart_inline ?? null, data: d.data ?? null, ts: d.ts || new Date().toISOString(), tool: d.tool ?? null }])
+    } catch (err: any) {
+      const s = err?.response?.status
+      if (!s || (s !== 401 && s !== 402 && s !== 403)) {
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: 'Something went wrong. Try again.', ts: new Date().toISOString() }])
       }
-      setMessages(m => [...m, {
-        role: 'assistant',
-        content: data.text,
-        tool: data.tool,
-        tool_args: data.tool_args,
-        data: data.data,
-        chart: data.chart || undefined,
-        chart_inline: data.chart_inline || undefined,
-        chart_post: data.chart_post || undefined,
-        ts: data.ts,
-      }])
-    } catch (e: any) {
-      const msg = e.response?.data?.detail || e.message || 'Request failed.'
-      setMessages(m => [...m, { role: 'assistant', content: `\u26a0 ${msg}` }])
-    } finally {
-      setBusy(false)
-    }
-  }, [busy, sessionId, messages])
+    } finally { setLoading(false); inputRef.current?.focus() }
+  }, [loading, sessionId])
 
-  const newSession = useCallback(() => {
-    setSessionId(null)
-    localStorage.removeItem(SESSION_STORAGE_KEY)
-    setMessages(welcomeMsg())
-  }, [])
+  function pinMessage(msg: Message, query: string) {
+    setTray(prev => prev.find(t => t.id === msg.id) ? prev : [...prev, { id: msg.id, query: query.slice(0, 40), summary: msg.content.slice(0, 60) }])
+    setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, pinned: true } : m))
+  }
+  function unpinTrayItem(id: string) {
+    setTray(prev => prev.filter(t => t.id !== id))
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, pinned: false } : m))
+  }
+  function jumpToMessage(id: string) { document.getElementById(`msg-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
+  function lastUserMsg(beforeIdx: number): string {
+    for (let i = beforeIdx - 1; i >= 0; i--) { if (messages[i].role === 'user') return messages[i].content }
+    return ''
+  }
 
-  const loadSessions = useCallback(async () => {
-    try {
-      const { data } = await api.get('/api/chat/sessions')
-      setSessions(data.sessions || [])
-    } catch {
-      setSessions([])
-    }
-  }, [])
-
-  const switchSession = useCallback(async (sid: string) => {
-    setSessionId(sid)
-    storeSessionId(sid)
-    setShowSidebar(false)
-    try {
-      const { data } = await api.get(`/api/chat/sessions/${sid}`)
-      if (data.messages && data.messages.length > 0) {
-        const restored: Msg[] = data.messages.map((m: any) => ({
-          role: m.role,
-          content: m.content,
-        }))
-        setMessages(restored)
-      }
-    } catch {
-      setMessages(welcomeMsg())
-    }
-  }, [])
-
-  const deleteSession = useCallback(async (sid: string) => {
-    try {
-      await api.delete(`/api/chat/sessions/${sid}`)
-      if (sid === sessionId) {
-        newSession()
-      }
-      await loadSessions()
-    } catch { /* noop */ }
-  }, [sessionId, newSession, loadSessions])
-
-  const toggleSidebar = useCallback(() => {
-    if (!showSidebar) loadSessions()
-    setShowSidebar(v => !v)
-  }, [showSidebar, loadSessions])
+  const isEmpty = messages.length === 0
 
   return (
-    <div className="page-shell" style={{ maxWidth: 960, margin: '0 auto', position: 'relative' }}>
-      {/* Session sidebar overlay */}
-      {showSidebar && (
-        <>
-          <div style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 99,
-          }} onClick={() => setShowSidebar(false)} />
-          <div style={{
-            position: 'fixed', left: 0, top: 0, bottom: 0, width: 300,
-            background: 'var(--panel)', borderRight: '1px solid var(--border)',
-            zIndex: 100, display: 'flex', flexDirection: 'column',
-          }}>
-            <div className="row" style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', justifyContent: 'space-between' }}>
-              <h4 style={{ fontSize: 14, margin: 0 }}>Chat Sessions</h4>
-              <button className="ghost" style={{ fontSize: 11, padding: '2px 8px' }} onClick={newSession}>
-                + New
-              </button>
-            </div>
-            <div style={{ flex: 1, overflowY: 'auto' }}>
-              {sessions.length === 0 && (
-                <div style={{ padding: 16, fontSize: 12, color: 'var(--muted)' }}>No sessions yet.</div>
-              )}
-              {sessions.map(s => (
-                <div key={s.session_id} className="row" style={{
-                  padding: '10px 16px', borderBottom: '1px solid var(--border)',
-                  justifyContent: 'space-between', cursor: 'pointer',
-                  background: s.session_id === sessionId ? 'var(--panel-hover)' : undefined,
-                }} onClick={() => switchSession(s.session_id)}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {s.last_message || 'Empty session'}
-                    </div>
-                    <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
-                      {s.message_count} msgs · {s.last_ts ? new Date(s.last_ts).toLocaleString() : '—'}
-                    </div>
-                  </div>
-                  <button className="ghost" style={{ fontSize: 10, padding: '2px 6px', marginLeft: 8 }}
-                          onClick={(e) => { e.stopPropagation(); deleteSession(s.session_id); }}>
-                    ✕
-                  </button>
-                </div>
+    <div className="agent-page">
+      {isEmpty ? (
+        <div className="chat-empty">
+          <div className="chat-empty-logo">R</div>
+          <h1 className="chat-empty-title">
+            {user ? `Hey ${user.display_name?.split(' ')[0] || 'there'} 👋` : "Hey, I'm Reyu"}
+          </h1>
+          <p className="chat-empty-sub">
+            Your expert AI options trading assistant for Indian markets.
+            Ask me anything — live prices, OI analysis, strategy ideas.
+            {!user && ' No login needed to start.'}
+          </p>
+          {starters.length > 0 && (
+            <div className="starters-grid">
+              {starters.map((s, i) => (
+                <button key={i} className="starter-card" onClick={() => send(s.text)}>
+                  <span className="starter-icon">{s.icon}</span>
+                  <span className="starter-text">{s.text}</span>
+                </button>
               ))}
             </div>
-          </div>
-        </>
+          )}
+          {!user && (
+            <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 8 }}>
+              <span style={{ cursor:'pointer', color:'var(--color-primary)', textDecoration:'underline' }} onClick={() => openGate({ mode: 'signup' })}>Sign up free</span>
+              {' '}to save strategies · 15-day trial · no card needed
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="chat-thread" ref={threadRef}>
+          {messages.map((msg, idx) => (
+            <div id={`msg-${msg.id}`} key={msg.id} className={`chat-row ${msg.role === 'user' ? 'chat-row-user' : ''}`}>
+              <div className={`chat-avatar ${msg.role === 'user' ? 'chat-avatar-user' : 'chat-avatar-reyu'}`}>
+                {msg.role === 'user' ? (user?.display_name?.[0]?.toUpperCase() ?? '?') : 'R'}
+              </div>
+              <div className="chat-bubble-wrap">
+                {msg.role === 'user' ? (
+                  <div className="chat-bubble chat-bubble-user">{msg.content}</div>
+                ) : (
+                  <div className="chat-bubble chat-bubble-reyu">
+                    {msg.data?.strategy_stage && <StrategyLifecycleStrip current={msg.data.strategy_stage as StrategyStage} />}
+                    <div>{renderMarkdown(msg.content)}</div>
+                    {(msg.chart_inline || msg.chart) && (
+                      <div className="chat-chart"><img src={msg.chart_inline || msg.chart!} alt="Chart" loading="lazy" /></div>
+                    )}
+                    <div style={{ marginTop: 8 }}>
+                      <button className={`rc-action ${msg.pinned ? 'rc-action-active' : ''}`} style={{ fontSize: 11 }}
+                              onClick={() => pinMessage(msg, lastUserMsg(idx))} title={msg.pinned ? 'Pinned' : 'Pin to tray'}>
+                        {msg.pinned ? '📌 Pinned' : '📌 Pin'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div className="chat-row">
+              <div className="chat-avatar chat-avatar-reyu">R</div>
+              <div className="typing-indicator">
+                <div className="typing-dot" /><div className="typing-dot" /><div className="typing-dot" />
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 200px)', minHeight: 500 }}>
-        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h3 style={{ margin: 0 }}>Reyu Co-pilot</h3>
-            <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-              Conversational view of your analytics — backed by the same engine as the dashboard.
-            </span>
-          </div>
-          <div className="row" style={{ gap: 6 }}>
-            <button className="ghost" style={{ fontSize: 11, padding: '4px 10px' }} onClick={newSession}>
-              New Chat
+      {nudges.length > 0 && (
+        <div className="nudge-strip">
+          {nudges.map(n => (
+            <button key={n.id} className={`nudge-chip ${n.live ? 'nudge-chip-live' : ''}`} onClick={() => send(n.query)} title={n.text}>
+              {n.live && <span className="nudge-dot" />}
+              <span>{n.icon}</span><span>{n.text}</span>
             </button>
-            <button className="ghost" style={{ fontSize: 11, padding: '4px 10px' }} onClick={toggleSidebar}>
-              History
-            </button>
-          </div>
-        </div>
-
-        <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '8px 4px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {messages.map((m, i) => (
-            <MessageBubble key={i} m={m} />
           ))}
-          {busy && <MessageBubble m={{ role: 'assistant', content: 'Thinking…' }} />}
         </div>
+      )}
 
-        {/* Prompt chips */}
-        {messages.length <= 2 && (
-          <div className="row" style={{ flexWrap: 'wrap', gap: 6, padding: '8px 4px', borderTop: '1px solid var(--border)' }}>
-            {PROMPTS.map(p => (
-              <button key={p} className="ghost" style={{ fontSize: 11, padding: '4px 10px' }}
-                      onClick={() => send(p)} disabled={busy}>{p}</button>
-            ))}
+      <div className="chat-input-bar">
+        <form onSubmit={e => { e.preventDefault(); send(input) }}>
+          <div className="chat-input-wrap">
+            <textarea ref={inputRef} className="chat-input" rows={1} disabled={loading}
+              placeholder="Ask Reyu anything — NIFTY analysis, strategy ideas, live prices…"
+              value={input} onChange={e => setInput(e.target.value)}
+              onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) } }}
+              aria-label="Chat with Reyu" />
+            <button type="submit" className="chat-send-btn" disabled={!input.trim() || loading} aria-label="Send">
+              {loading ? <SpinnerIcon /> : <SendIcon />}
+            </button>
           </div>
-        )}
+        </form>
+        <p className="chat-input-hint">
+          Enter to send · Shift+Enter for new line
+          {!user && <> · <span style={{ cursor:'pointer', color:'var(--color-primary)' }} onClick={() => openGate({ mode:'signup' })}>Sign up free</span> to save strategies</>}
+        </p>
+      </div>
 
-        {/* Input */}
-        <div className="row" style={{ gap: 6, padding: '8px 4px 0', borderTop: '1px solid var(--border)' }}>
-          <input
-            className="input"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) }}}
-            placeholder="Ask about bias, hedge, scalping, payoff…"
-            disabled={busy}
-            style={{ flex: 1 }}
-          />
-          <button className="primary" onClick={() => send(input)} disabled={busy || !input.trim()}>
-            Send
-          </button>
-        </div>
+      <div className="tray-bar">
+        <span className="tray-label">Tray</span>
+        {tray.length === 0
+          ? <span className="tray-empty">Pin responses to bookmark them here</span>
+          : tray.map(item => (
+              <div key={item.id} className="tray-item" onClick={() => jumpToMessage(item.id)} title={item.summary}>
+                <span className="tray-item-text">{item.query || item.summary}</span>
+                <button className="tray-unpin" onClick={e => { e.stopPropagation(); unpinTrayItem(item.id) }} title="Remove" aria-label="Remove">×</button>
+              </div>
+            ))
+        }
       </div>
     </div>
   )
 }
 
-function MessageBubble({ m }: { m: Msg }) {
-  const isUser = m.role === 'user'
-  const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
-  const [postChart, setPostChart] = useState<string | null>(null)
-
-  // Fetch POST-based chart on mount
-  useEffect(() => {
-    if (m.chart_post && !postChart) {
-      const url = m.chart_post.url.startsWith('/')
-        ? apiBase + m.chart_post.url
-        : m.chart_post.url
-      api.post(url, m.chart_post.body).then(res => {
-        // Response is binary PNG, convert to blob URL
-        const blob = new Blob([res.data], { type: 'image/png' })
-        setPostChart(URL.createObjectURL(blob))
-      }).catch(() => {
-        setPostChart('error')
-      })
-    }
-  }, [m.chart_post])
-
-  return (
-    <div style={{
-      display: 'flex',
-      justifyContent: isUser ? 'flex-end' : 'flex-start',
-      gap: 8,
-    }}>
-      {!isUser && <Avatar />}
-      <div style={{
-        maxWidth: '78%',
-        background: isUser ? 'var(--accent-bg, rgba(96,165,250,0.18))' : 'var(--panel-hover, var(--panel))',
-        border: '1px solid var(--border)',
-        borderRadius: 12,
-        padding: '10px 14px',
-        fontSize: 13,
-        lineHeight: 1.55,
-        whiteSpace: 'pre-wrap',
-        color: 'var(--text)',
-      }}>
-        {renderMarkdown(m.content)}
-        {m.chart && (
-          <img src={apiBase + m.chart}
-               alt="chart"
-               style={{ display: 'block', width: '100%', marginTop: 10, borderRadius: 8, border: '1px solid var(--border)' }} />
-        )}
-        {m.chart_inline && (
-          <img src={m.chart_inline}
-               alt="chart"
-               style={{ display: 'block', width: '100%', marginTop: 10, borderRadius: 8, border: '1px solid var(--border)' }} />
-        )}
-        {m.chart_post && (
-          <div style={{ marginTop: 10 }}>
-            {postChart && postChart !== 'error' ? (
-              <img src={postChart}
-                   alt="chart"
-                   style={{ display: 'block', width: '100%', borderRadius: 8, border: '1px solid var(--border)' }} />
-            ) : postChart === 'error' ? (
-              <div style={{ fontSize: 11, color: 'var(--muted)', padding: '8px 0' }}>Chart unavailable</div>
-            ) : (
-              <div style={{ fontSize: 11, color: 'var(--muted)', padding: '8px 0' }}>Loading chart...</div>
-            )}
-          </div>
-        )}
-        {m.tool && (
-          <div style={{ marginTop: 6, fontSize: 10, color: 'var(--muted)' }}>
-            via <code>{m.tool}</code>
-          </div>
-        )}
-      </div>
-      {isUser && <Avatar user />}
-    </div>
-  )
+function SendIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
 }
-
-function Avatar({ user }: { user?: boolean }) {
-  return (
-    <div style={{
-      width: 28, height: 28, borderRadius: 999, flexShrink: 0,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: 12, fontWeight: 700,
-      background: user ? 'var(--accent)' : 'var(--panel)',
-      color: user ? '#0b0e14' : 'var(--accent)',
-      border: '1px solid var(--border)',
-    }}>{user ? 'U' : 'R'}</div>
-  )
-}
-
-// Minimal markdown — bold (**text**) and line breaks. We deliberately avoid
-// a full markdown library to keep the bundle thin; the tool layer already
-// produces clean text.
-function renderMarkdown(text: string) {
-  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={i}>{part.slice(2, -2)}</strong>
-    }
-    if (part.startsWith('`') && part.endsWith('`')) {
-      return <code key={i} style={{ background: 'var(--border)', padding: '1px 4px', borderRadius: 3, fontSize: 11 }}>{part.slice(1, -1)}</code>
-    }
-    return <span key={i}>{part}</span>
-  })
+function SpinnerIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ animation: 'spin 0.7s linear infinite' }}><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
 }

@@ -1,303 +1,343 @@
+/**
+ * Subscription / billing page  (/subscribe)
+ *
+ * Tiers match AuthContext: 'free' | 'pro' | 'algo'
+ * Pricing: $0 (15-day trial) | $20/mo | $99/mo
+ * Uses useAuth() + api from AuthContext — no old ../api import.
+ */
 import { useState, useEffect, useCallback } from 'react'
-import { useToast } from '../toast'
-import { api } from '../api'
+import { useAuth, api } from '../context/AuthContext'
 
-type Tier = {
+// ─── Plan data ────────────────────────────────────────────────────────────────
+
+interface Plan {
   id: 'free' | 'pro' | 'algo'
   name: string
-  price_inr_month: number
-  price_inr_year: number
+  priceUSD: number
+  priceAnnualUSD: number
   tagline: string
+  cta: string
   highlight: boolean
-  features: { label: string; included: boolean | string }[]
+  features: { label: string; value: boolean | string }[]
 }
 
-const TIERS: Tier[] = [
+const PLANS: Plan[] = [
   {
-    id: 'free', name: 'Starter', price_inr_month: 0, price_inr_year: 0,
-    tagline: 'Explore the platform with demo data',
+    id: 'free',
+    name: 'Starter',
+    priceUSD: 0,
+    priceAnnualUSD: 0,
+    tagline: '15-day trial with live market data',
+    cta: 'Current plan',
     highlight: false,
     features: [
-      { label: 'Demo chain (synthetic)', included: true },
-      { label: '1 watchlist · up to 10 symbols', included: true },
-      { label: 'Strategy Builder (single leg)', included: true },
-      { label: 'Saved strategies', included: '3' },
-      { label: 'Live Fyers data', included: false },
-      { label: 'Multi-leg payoff + margin', included: false },
-      { label: 'Webhook alerts', included: false },
-      { label: 'API access', included: false },
-      { label: 'Priority support', included: false },
+      { label: 'Live NSE option chain (demo)', value: true },
+      { label: 'AI agent chat', value: true },
+      { label: 'Saved strategies', value: '10 max' },
+      { label: 'Backtest runs', value: '50 max' },
+      { label: 'Payoff + Greeks charts', value: true },
+      { label: 'Live broker connection', value: false },
+      { label: 'Paper trading', value: false },
+      { label: 'IV smile + skew', value: false },
+      { label: 'RL signals', value: false },
+      { label: 'Webhook alerts', value: false },
     ],
   },
   {
-    id: 'pro', name: 'Pro', price_inr_month: 999, price_inr_year: 9990,
-    tagline: 'Most popular — full live trading workflow',
+    id: 'pro',
+    name: 'Pro',
+    priceUSD: 20,
+    priceAnnualUSD: 192, // $16/mo billed annually
+    tagline: 'Full live trading — unlimited everything',
+    cta: 'Upgrade to Pro',
     highlight: true,
     features: [
-      { label: 'Live Fyers chain + orders', included: true },
-      { label: 'Watchlists · unlimited', included: true },
-      { label: 'Strategy Builder (4 legs)', included: true },
-      { label: 'Saved strategies', included: 'unlimited' },
-      { label: 'Hedge builder + margin', included: true },
-      { label: 'IV smile + skew analytics', included: true },
-      { label: 'PCR / OI time series', included: true },
-      { label: 'Webhook alerts (Telegram/Discord)', included: true },
-      { label: 'API access', included: false },
+      { label: 'Live NSE option chain', value: true },
+      { label: 'AI agent chat', value: true },
+      { label: 'Saved strategies', value: 'Unlimited' },
+      { label: 'Backtest runs', value: 'Unlimited' },
+      { label: 'Payoff + Greeks charts', value: true },
+      { label: 'Live broker connection', value: true },
+      { label: 'Paper trading', value: true },
+      { label: 'IV smile + skew', value: true },
+      { label: 'RL signals', value: true },
+      { label: 'Webhook alerts (Telegram/Discord)', value: true },
     ],
   },
   {
-    id: 'algo', name: 'Algo', price_inr_month: 2999, price_inr_year: 29990,
+    id: 'algo',
+    name: 'Algo',
+    priceUSD: 99,
+    priceAnnualUSD: 948, // $79/mo billed annually
     tagline: 'For systematic traders & desks',
+    cta: 'Upgrade to Algo',
     highlight: false,
     features: [
-      { label: 'Everything in Pro', included: true },
-      { label: 'Multi-leg strategies (unlimited)', included: true },
-      { label: 'Multi-portfolio book + kill switch', included: true },
-      { label: 'Scalping signal scanner', included: true },
-      { label: 'Strategy backtesting (coming)', included: true },
-      { label: 'REST + WS API access', included: true },
-      { label: 'Custom risk policies', included: true },
-      { label: 'White-glove onboarding', included: true },
-      { label: 'Priority 24/7 support', included: true },
+      { label: 'Everything in Pro', value: true },
+      { label: 'Multi-portfolio + kill switch', value: true },
+      { label: 'Scalping scanner', value: true },
+      { label: 'REST + WebSocket API', value: true },
+      { label: 'Custom risk policies', value: true },
+      { label: 'Multiple broker accounts', value: true },
+      { label: 'Backtesting (with real premiums)', value: true },
+      { label: 'White-glove onboarding', value: true },
+      { label: 'Priority 24/7 support', value: true },
+      { label: 'SLA guarantee', value: true },
     ],
   },
 ]
 
-const CURRENT_TIER_KEY = 'reyu_tier'
+// ─── Razorpay ─────────────────────────────────────────────────────────────────
 
-// Load Razorpay script once
-let razorpayScriptLoaded = false
-function loadRazorpayScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (razorpayScriptLoaded || (window as any).Razorpay) {
-      razorpayScriptLoaded = true
-      resolve()
-      return
-    }
-    const script = document.createElement('script')
-    script.src = 'https://checkout.razorpay.com/v1/checkout.js'
-    script.onload = () => { razorpayScriptLoaded = true; resolve() }
-    script.onerror = () => reject(new Error('Failed to load Razorpay SDK'))
-    document.body.appendChild(script)
+let _rzpLoaded = false
+function loadRazorpay(): Promise<void> {
+  return new Promise((res, rej) => {
+    if (_rzpLoaded || (window as any).Razorpay) { _rzpLoaded = true; res(); return }
+    const s = document.createElement('script')
+    s.src = 'https://checkout.razorpay.com/v1/checkout.js'
+    s.onload = () => { _rzpLoaded = true; res() }
+    s.onerror = () => rej(new Error('Razorpay SDK failed to load'))
+    document.body.appendChild(s)
   })
 }
 
-interface RazorpayResponse {
-  razorpay_payment_id: string
-  razorpay_subscription_id: string
-  razorpay_signature: string
+// ─── Sub status ───────────────────────────────────────────────────────────────
+
+interface SubStatus {
+  tier: string
+  subscription_id: string | null
+  subscription_status: string | null
+  subscription_ends_at: string | null
+  pending_plan: string | null
 }
 
-export default function Subscription() {
-  const t = useToast()
-  const [cycle, setCycle] = useState<'month' | 'year'>('month')
-  const [current, setCurrent] = useState<Tier['id']>(() => (localStorage.getItem(CURRENT_TIER_KEY) as any) || 'free')
-  const [upgrading, setUpgrading] = useState(false)
-  const [subStatus, setSubStatus] = useState<{
-    tier: string
-    subscription_id: string | null
-    subscription_status: string | null
-    subscription_ends_at: string | null
-    pending_plan: string | null
-  } | null>(null)
+// ─── Component ────────────────────────────────────────────────────────────────
 
-  // Fetch subscription status from backend
+export default function Subscription() {
+  const { user, tier, isAuthenticated, openGate, trialDaysLeft, usage } = useAuth()
+  const [cycle, setCycle] = useState<'month' | 'year'>('month')
+  const [busy, setBusy] = useState(false)
+  const [subStatus, setSubStatus] = useState<SubStatus | null>(null)
+  const [toast, setToast] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null)
+
+  const pushToast = (type: 'ok' | 'err', msg: string) => {
+    setToast({ type, msg })
+    setTimeout(() => setToast(null), 4000)
+  }
+
   const fetchStatus = useCallback(async () => {
-    const token = localStorage.getItem('access_token')
-    if (!token) return
+    if (!isAuthenticated) return
     try {
       const { data } = await api.get('/api/billing/status')
       setSubStatus(data)
-      if (data.tier) {
-        setCurrent(data.tier as Tier['id'])
-        localStorage.setItem(CURRENT_TIER_KEY, data.tier)
-      }
-    } catch {
-      // Not logged in or no subscription yet — use local state
-    }
-  }, [])
+    } catch { /* ignore */ }
+  }, [isAuthenticated])
 
   useEffect(() => { fetchStatus() }, [fetchStatus])
 
-  const openRazorpayCheckout = async (tierId: Tier['id']) => {
-    setUpgrading(true)
-    try {
-      await loadRazorpayScript()
+  // ── Upgrade / checkout ────────────────────────────────────────────────────
 
-      // 1. Create subscription on backend
-      const { data: sub } = await api.post('/api/billing/create-subscription', {
-        tier: tierId,
-        cycle,
-      })
-
-      // 2. Open Razorpay checkout modal
-      const options = {
-        key: sub.razorpay_key,
-        subscription_id: sub.subscription_id,
-        name: 'Reyu.ai',
-        description: `${tierId.charAt(0).toUpperCase() + tierId.slice(1)} Plan (${cycle})`,
-        image: '/reyu-icon.png',
-        handler: async (_response: RazorpayResponse) => {
-          // Payment succeeded — webhook will activate the plan
-          t.push('success', `Payment successful! Your ${tierId} plan will activate shortly.`)
-          // Refresh status after a short delay
-          setTimeout(fetchStatus, 2000)
-        },
-        prefill: {
-          name: sub.customer?.name || '',
-          email: sub.customer?.email || '',
-        },
-        theme: { color: '#60a5fa' },
-        modal: {
-          ondismiss: () => {
-            setUpgrading(false)
-            t.push('info', 'Checkout cancelled. You can try again anytime.')
-          },
-        },
-        notes: { tier: tierId, cycle },
-        callback_url: sub.callback_url,
-      }
-
-      const rzp = new (window as any).Razorpay(options)
-      rzp.open()
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || err?.message || 'Failed to start checkout'
-      t.push('error', msg)
-      setUpgrading(false)
-    }
-  }
-
-  const choose = async (id: Tier['id']) => {
-    if (id === current) return
-
-    if (id === 'free') {
-      // Downgrade to free — no payment needed
-      setUpgrading(true)
-      try {
-        const token = localStorage.getItem('access_token')
-        if (token) {
-          await api.post('/api/user/tier', { tier: id })
-        }
-      } catch {
-        // Backend tier update failed — still save locally
-      }
-      localStorage.setItem(CURRENT_TIER_KEY, id)
-      setCurrent(id)
-      t.push('success', 'Switched to Starter.')
-      setUpgrading(false)
+  async function handleChoose(plan: Plan) {
+    if (plan.id === tier) return
+    if (!isAuthenticated) {
+      openGate({ mode: 'login', message: 'Sign in to upgrade your plan.', onSuccess: () => handleChoose(plan) })
       return
     }
 
-    // Paid tier — open Razorpay checkout
-    await openRazorpayCheckout(id)
+    if (plan.id === 'free') {
+      setBusy(true)
+      try {
+        await api.post('/api/user/tier', { tier: 'free' })
+        pushToast('ok', 'Switched to Starter.')
+        await fetchStatus()
+      } catch (e: any) {
+        pushToast('err', e?.response?.data?.detail || 'Could not switch plan.')
+      }
+      setBusy(false)
+      return
+    }
+
+    // Paid plans — Razorpay checkout
+    setBusy(true)
+    try {
+      await loadRazorpay()
+      const { data: sub } = await api.post('/api/billing/create-subscription', {
+        tier: plan.id,
+        cycle,
+      })
+      const rzp = new (window as any).Razorpay({
+        key: sub.razorpay_key,
+        subscription_id: sub.subscription_id,
+        name: 'Reyu.ai',
+        description: `${plan.name} Plan — ${cycle === 'month' ? 'Monthly' : 'Annual'}`,
+        image: '/reyu-icon.png',
+        handler: async () => {
+          pushToast('ok', `${plan.name} plan activated! Welcome to the next level.`)
+          setTimeout(fetchStatus, 2000)
+          setBusy(false)
+        },
+        prefill: { name: user?.display_name || '', email: user?.email || '' },
+        theme: { color: '#10b981' },
+        modal: { ondismiss: () => setBusy(false) },
+        notes: { tier: plan.id, cycle },
+      })
+      rzp.open()
+    } catch (e: any) {
+      pushToast('err', e?.response?.data?.detail || e?.message || 'Checkout failed.')
+      setBusy(false)
+    }
   }
 
-  const cancelSubscription = async () => {
-    if (!confirm('Cancel your subscription? You will keep access until the end of your current billing period.')) return
-    setUpgrading(true)
+  async function handleCancel() {
+    if (!confirm('Cancel subscription? You keep access until the end of your billing period.')) return
+    setBusy(true)
     try {
       await api.post('/api/billing/cancel')
-      t.push('success', 'Subscription cancelled. You will keep access until the end of your current period.')
+      pushToast('ok', 'Subscription cancelled. Access continues until period end.')
       await fetchStatus()
-    } catch (err: any) {
-      t.push('error', err?.response?.data?.detail || 'Failed to cancel subscription')
+    } catch (e: any) {
+      pushToast('err', e?.response?.data?.detail || 'Failed to cancel.')
     }
-    setUpgrading(false)
+    setBusy(false)
   }
 
-  const price = (tier: Tier) =>
-    cycle === 'month' ? tier.price_inr_month : Math.round(tier.price_inr_year / 12)
+  // ── Derived ───────────────────────────────────────────────────────────────
 
-  const isPaid = (id: Tier['id']) => id === 'pro' || id === 'algo'
+  const displayPrice = (plan: Plan) =>
+    cycle === 'month' ? plan.priceUSD : Math.round(plan.priceAnnualUSD / 12)
+
+  const isActive = subStatus?.subscription_status === 'active'
 
   return (
-    <div className="page-shell">
-      <div style={{ textAlign: 'center', marginBottom: 18 }}>
-        <h2 style={{ margin: 0, fontSize: 28 }}>Choose your edge</h2>
-        <p style={{ color: 'var(--muted)', marginTop: 6 }}>
-          From learning options to running an automated book — Reyu.ai scales with you.
+    <div className="sub-page">
+      {/* Toast */}
+      {toast && (
+        <div className={`sub-toast ${toast.type === 'ok' ? 'sub-toast-ok' : 'sub-toast-err'}`}>
+          {toast.type === 'ok' ? '✓' : '⚠'} {toast.msg}
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="sub-header">
+        <h1 className="sub-title">Choose your edge</h1>
+        <p className="sub-subtitle">
+          From learning options to running a systematic algo book — Reyu.ai scales with you.
         </p>
-        <div style={{ marginTop: 10, display: 'inline-flex', padding: 4, background: 'var(--border)', borderRadius: 999 }}>
-          <button onClick={() => setCycle('month')}
-                  className={cycle === 'month' ? 'primary' : 'ghost'} style={{ padding: '6px 14px' }}>Monthly</button>
-          <button onClick={() => setCycle('year')}
-                  className={cycle === 'year' ? 'primary' : 'ghost'} style={{ padding: '6px 14px' }}>
-            Annual <span style={{ fontSize: 10, marginLeft: 4, color: 'var(--green)' }}>save ~17%</span>
+
+        {/* Billing cycle toggle */}
+        <div className="sub-cycle-toggle">
+          <button
+            className={`sub-cycle-btn ${cycle === 'month' ? 'sub-cycle-active' : ''}`}
+            onClick={() => setCycle('month')}
+          >Monthly</button>
+          <button
+            className={`sub-cycle-btn ${cycle === 'year' ? 'sub-cycle-active' : ''}`}
+            onClick={() => setCycle('year')}
+          >
+            Annual
+            <span className="sub-save-badge">Save ~20%</span>
           </button>
         </div>
       </div>
 
+      {/* Trial countdown banner */}
+      {isAuthenticated && trialDaysLeft !== null && (
+        <div className="sub-trial-banner">
+          <span className="sub-trial-icon">⏳</span>
+          <div>
+            <strong>{trialDaysLeft} day{trialDaysLeft !== 1 ? 's' : ''} left on your free trial</strong>
+            <span className="sub-trial-sub"> — upgrade before it ends to keep your data.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Free tier usage */}
+      {isAuthenticated && tier === 'free' && (
+        <div className="sub-usage-block">
+          <div className="sub-usage-row">
+            <span>Saved strategies</span>
+            <span className="sub-usage-count">{usage.strategies} / 10</span>
+          </div>
+          <div className="sub-usage-bar">
+            <div className="sub-usage-fill" style={{ width: `${Math.min(100, (usage.strategies / 10) * 100)}%` }} />
+          </div>
+          <div className="sub-usage-row" style={{ marginTop: 8 }}>
+            <span>Backtest runs</span>
+            <span className="sub-usage-count">{usage.backtests} / 50</span>
+          </div>
+          <div className="sub-usage-bar">
+            <div className="sub-usage-fill" style={{ width: `${Math.min(100, (usage.backtests / 50) * 100)}%` }} />
+          </div>
+        </div>
+      )}
+
       {/* Active subscription banner */}
-      {subStatus?.subscription_status === 'active' && current !== 'free' && (
-        <div className="card" style={{ maxWidth: 720, margin: '0 auto 16px', textAlign: 'center', border: '1px solid var(--green)' }}>
-          <div style={{ color: 'var(--green)', fontWeight: 600, marginBottom: 4 }}>
-            ✓ {current.charAt(0).toUpperCase() + current.slice(1)} plan active
+      {isActive && tier !== 'free' && (
+        <div className="sub-active-banner">
+          <div className="sub-active-left">
+            <span className="sub-active-dot" />
+            <div>
+              <strong>{PLANS.find(p => p.id === tier)?.name ?? tier} plan active</strong>
+              {subStatus?.subscription_ends_at && (
+                <div className="sub-active-sub">
+                  Renews {new Date(subStatus.subscription_ends_at).toLocaleDateString('en-IN', {
+                    year: 'numeric', month: 'short', day: 'numeric',
+                  })}
+                  {subStatus.pending_plan ? ` · Changing to ${subStatus.pending_plan} at period end` : ''}
+                </div>
+              )}
+            </div>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-            {subStatus.subscription_ends_at
-              ? `Renews ${new Date(subStatus.subscription_ends_at).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' })}`
-              : 'Auto-renewing'}
-            {subStatus.pending_plan && ` · Changing to ${subStatus.pending_plan} at period end`}
-          </div>
-          <button onClick={cancelSubscription} disabled={upgrading}
-                  className="ghost" style={{ fontSize: 11, marginTop: 8, color: 'var(--muted)' }}>
-            Cancel subscription
+          <button className="sub-cancel-btn" onClick={handleCancel} disabled={busy}>
+            Cancel
           </button>
         </div>
       )}
 
-      <div className="row" style={{ gap: 14, justifyContent: 'center', flexWrap: 'wrap' }}>
-        {TIERS.map(tier => {
-          const isCurrent = tier.id === current
+      {/* Plan cards */}
+      <div className="sub-plans">
+        {PLANS.map(plan => {
+          const isCurrent = plan.id === tier
           return (
-            <div key={tier.id}
-                 className={tier.highlight ? 'card-gradient' : 'card-glass'}
-                 style={{
-                   flex: '1 1 280px', maxWidth: 340, minWidth: 260,
-                   border: tier.highlight ? '1px solid var(--accent)' : undefined,
-                   transform: tier.highlight ? 'translateY(-4px)' : undefined,
-                   boxShadow: tier.highlight ? '0 12px 32px rgba(96,165,250,0.18)' : undefined,
-                   position: 'relative',
-                 }}>
-              {tier.highlight && (
-                <div style={{
-                  position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)',
-                  background: 'var(--accent)', color: '#fff', fontSize: 10,
-                  padding: '3px 10px', borderRadius: 999, letterSpacing: 1, textTransform: 'uppercase',
-                }}>Most popular</div>
-              )}
-              <div style={{ textAlign: 'center', padding: '8px 0 12px' }}>
-                <div style={{ fontSize: 12, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 1 }}>{tier.name}</div>
-                <div style={{ fontSize: 32, fontWeight: 700, marginTop: 4 }}>
-                  ₹{price(tier).toLocaleString('en-IN')}
-                  <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 400 }}>/mo</span>
+            <div
+              key={plan.id}
+              className={`sub-card ${plan.highlight ? 'sub-card-highlight' : ''} ${isCurrent ? 'sub-card-current' : ''}`}
+            >
+              {plan.highlight && <div className="sub-popular-badge">Most popular</div>}
+
+              <div className="sub-card-header">
+                <div className="sub-plan-name">{plan.name}</div>
+                <div className="sub-price-row">
+                  <span className="sub-price">
+                    {plan.priceUSD === 0 ? 'Free' : `$${displayPrice(plan)}`}
+                  </span>
+                  {plan.priceUSD > 0 && <span className="sub-price-unit">/mo</span>}
                 </div>
-                {cycle === 'year' && tier.price_inr_year > 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>billed ₹{tier.price_inr_year.toLocaleString('en-IN')} yearly</div>
+                {cycle === 'year' && plan.priceAnnualUSD > 0 && (
+                  <div className="sub-billed-note">billed ${plan.priceAnnualUSD}/year</div>
                 )}
-                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>{tier.tagline}</div>
+                <div className="sub-tagline">{plan.tagline}</div>
               </div>
 
               <button
-                onClick={() => choose(tier.id)}
-                disabled={isCurrent || upgrading}
-                className={tier.highlight ? 'primary' : 'ghost'}
-                style={{ width: '100%', padding: 10, marginBottom: 12, opacity: isCurrent ? .6 : 1 }}>
-                {isCurrent
-                  ? 'Current plan'
-                  : tier.price_inr_month === 0
-                    ? 'Switch to Starter'
-                    : `Upgrade to ${tier.name}`}
+                className={`sub-cta-btn ${plan.highlight ? 'sub-cta-primary' : 'sub-cta-ghost'}`}
+                disabled={isCurrent || busy}
+                onClick={() => handleChoose(plan)}
+              >
+                {isCurrent ? '✓ Current plan' : plan.cta}
               </button>
 
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: 12, lineHeight: 1.8 }}>
-                {tier.features.map(f => (
-                  <li key={f.label} style={{ display: 'flex', gap: 8 }}>
-                    <span style={{ color: f.included ? 'var(--green)' : 'var(--muted)' }}>
-                      {f.included ? '✓' : '–'}
+              <ul className="sub-features">
+                {plan.features.map(f => (
+                  <li key={f.label} className={`sub-feature ${!f.value ? 'sub-feature-off' : ''}`}>
+                    <span className="sub-feature-icon">
+                      {f.value ? '✓' : '–'}
                     </span>
-                    <span style={{ color: f.included ? 'var(--text)' : 'var(--muted)' }}>
-                      {f.label}{typeof f.included === 'string' ? ` (${f.included})` : ''}
+                    <span>
+                      {f.label}
+                      {typeof f.value === 'string' && (
+                        <span className="sub-feature-val"> ({f.value})</span>
+                      )}
                     </span>
                   </li>
                 ))}
@@ -307,17 +347,273 @@ export default function Subscription() {
         })}
       </div>
 
-      <div className="card" style={{ marginTop: 20, maxWidth: 720, marginInline: 'auto', textAlign: 'center' }}>
-        <h3 style={{ margin: '0 0 6px' }}>Why traders choose Reyu.ai</h3>
-        <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-          ⚡ Single-view chain · IV smile · Greeks heatmap · PCR time series ·
-          payoff + margin in one click · Strategy builder with templates ·
-          Multi-portfolio risk caps · Kill-switch · Webhook alerts · Fyers SPAN margin · Demo mode
+      {/* Footer trust bar */}
+      <div className="sub-trust">
+        <div className="sub-trust-items">
+          <span>🔒 Razorpay secured</span>
+          <span>↩ Cancel anytime</span>
+          <span>🇮🇳 UPI mandate supported</span>
+          <span>💳 All major cards</span>
         </div>
-        <div style={{ marginTop: 10, fontSize: 11, color: 'var(--muted)' }}>
-          Payments powered by Razorpay. Cancel anytime — no questions asked.
-        </div>
+        <p className="sub-trust-note">
+          Payments processed via Razorpay. No questions asked cancellation policy.
+          INR billing available — price shown in USD for reference.
+        </p>
       </div>
+
+      <style>{`
+        .sub-page {
+          max-width: 1060px;
+          margin: 0 auto;
+          padding: 32px 20px 60px;
+          position: relative;
+        }
+        .sub-toast {
+          position: fixed;
+          top: 20px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 9999;
+          padding: 10px 20px;
+          border-radius: 8px;
+          font-size: 14px;
+          font-weight: 500;
+          animation: toastIn .2s ease;
+        }
+        .sub-toast-ok { background: var(--color-success); color: #fff; }
+        .sub-toast-err { background: var(--color-danger); color: #fff; }
+        @keyframes toastIn { from { opacity:0; transform: translateX(-50%) translateY(-8px); } to { opacity:1; transform: translateX(-50%) translateY(0); } }
+
+        .sub-header { text-align: center; margin-bottom: 32px; }
+        .sub-title { font-size: 30px; font-weight: 700; margin: 0 0 8px; }
+        .sub-subtitle { color: var(--color-text-muted); font-size: 15px; margin: 0 0 20px; }
+
+        .sub-cycle-toggle {
+          display: inline-flex;
+          background: var(--color-bg-card);
+          border: 1px solid var(--color-border);
+          border-radius: 999px;
+          padding: 4px;
+          gap: 2px;
+        }
+        .sub-cycle-btn {
+          background: none;
+          border: none;
+          padding: 7px 18px;
+          border-radius: 999px;
+          font-size: 13px;
+          cursor: pointer;
+          color: var(--color-text-muted);
+          transition: all .15s;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .sub-cycle-active {
+          background: var(--color-primary);
+          color: #fff;
+        }
+        .sub-save-badge {
+          background: rgba(16,185,129,.18);
+          color: var(--color-success);
+          font-size: 10px;
+          padding: 2px 6px;
+          border-radius: 999px;
+        }
+
+        .sub-trial-banner {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          background: rgba(245,158,11,.1);
+          border: 1px solid rgba(245,158,11,.3);
+          border-radius: 10px;
+          padding: 12px 16px;
+          margin-bottom: 16px;
+          font-size: 13px;
+        }
+        .sub-trial-icon { font-size: 18px; }
+        .sub-trial-sub { color: var(--color-text-muted); }
+
+        .sub-usage-block {
+          background: var(--color-bg-card);
+          border: 1px solid var(--color-border);
+          border-radius: 10px;
+          padding: 14px 16px;
+          margin-bottom: 20px;
+          font-size: 13px;
+        }
+        .sub-usage-row {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 4px;
+          color: var(--color-text-muted);
+        }
+        .sub-usage-count { font-weight: 600; color: var(--color-text); }
+        .sub-usage-bar {
+          height: 5px;
+          background: var(--color-border);
+          border-radius: 999px;
+          overflow: hidden;
+        }
+        .sub-usage-fill {
+          height: 100%;
+          background: var(--color-primary);
+          border-radius: 999px;
+          transition: width .4s ease;
+        }
+
+        .sub-active-banner {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: rgba(16,185,129,.08);
+          border: 1px solid rgba(16,185,129,.25);
+          border-radius: 10px;
+          padding: 12px 16px;
+          margin-bottom: 20px;
+        }
+        .sub-active-left { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+        .sub-active-dot {
+          width: 8px; height: 8px;
+          background: var(--color-success);
+          border-radius: 50%;
+          flex-shrink: 0;
+          box-shadow: 0 0 0 3px rgba(16,185,129,.2);
+        }
+        .sub-active-sub { font-size: 12px; color: var(--color-text-muted); margin-top: 2px; }
+        .sub-cancel-btn {
+          font-size: 12px;
+          padding: 5px 12px;
+          background: none;
+          border: 1px solid var(--color-border);
+          border-radius: 6px;
+          color: var(--color-text-muted);
+          cursor: pointer;
+          transition: all .15s;
+        }
+        .sub-cancel-btn:hover { border-color: var(--color-danger); color: var(--color-danger); }
+
+        .sub-plans {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+          gap: 16px;
+          margin-bottom: 32px;
+        }
+
+        .sub-card {
+          background: var(--color-bg-card);
+          border: 1px solid var(--color-border);
+          border-radius: 14px;
+          padding: 24px;
+          position: relative;
+          transition: box-shadow .2s, transform .2s;
+        }
+        .sub-card:hover { box-shadow: 0 4px 24px rgba(0,0,0,.12); }
+        .sub-card-highlight {
+          border-color: var(--color-primary);
+          box-shadow: 0 0 0 1px var(--color-primary), 0 8px 32px rgba(16,185,129,.15);
+          transform: translateY(-4px);
+        }
+        .sub-card-current { opacity: .85; }
+
+        .sub-popular-badge {
+          position: absolute;
+          top: -12px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: var(--color-primary);
+          color: #fff;
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: .8px;
+          text-transform: uppercase;
+          padding: 3px 12px;
+          border-radius: 999px;
+          white-space: nowrap;
+        }
+
+        .sub-card-header { margin-bottom: 18px; }
+        .sub-plan-name {
+          font-size: 12px;
+          font-weight: 600;
+          letter-spacing: 1px;
+          text-transform: uppercase;
+          color: var(--color-text-muted);
+          margin-bottom: 8px;
+        }
+        .sub-price-row { display: flex; align-items: baseline; gap: 3px; }
+        .sub-price { font-size: 36px; font-weight: 700; }
+        .sub-price-unit { font-size: 14px; color: var(--color-text-muted); }
+        .sub-billed-note { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; }
+        .sub-tagline { font-size: 13px; color: var(--color-text-muted); margin-top: 8px; line-height: 1.4; }
+
+        .sub-cta-btn {
+          width: 100%;
+          padding: 11px;
+          border-radius: 8px;
+          font-size: 14px;
+          font-weight: 600;
+          cursor: pointer;
+          border: none;
+          margin-bottom: 18px;
+          transition: all .15s;
+        }
+        .sub-cta-btn:disabled { opacity: .55; cursor: default; }
+        .sub-cta-primary {
+          background: var(--color-primary);
+          color: #fff;
+          box-shadow: 0 2px 12px rgba(16,185,129,.3);
+        }
+        .sub-cta-primary:hover:not(:disabled) { filter: brightness(1.08); }
+        .sub-cta-ghost {
+          background: none;
+          border: 1px solid var(--color-border);
+          color: var(--color-text);
+        }
+        .sub-cta-ghost:hover:not(:disabled) { border-color: var(--color-primary); color: var(--color-primary); }
+
+        .sub-features { list-style: none; padding: 0; margin: 0; }
+        .sub-feature {
+          display: flex;
+          gap: 8px;
+          font-size: 13px;
+          padding: 4px 0;
+          color: var(--color-text);
+          line-height: 1.5;
+        }
+        .sub-feature-off { color: var(--color-text-muted); }
+        .sub-feature-icon {
+          flex-shrink: 0;
+          width: 16px;
+          color: var(--color-success);
+          font-size: 12px;
+        }
+        .sub-feature-off .sub-feature-icon { color: var(--color-text-muted); }
+        .sub-feature-val { color: var(--color-text-muted); }
+
+        .sub-trust {
+          text-align: center;
+          padding-top: 24px;
+          border-top: 1px solid var(--color-border);
+        }
+        .sub-trust-items {
+          display: flex;
+          justify-content: center;
+          flex-wrap: wrap;
+          gap: 20px;
+          font-size: 13px;
+          font-weight: 500;
+          margin-bottom: 10px;
+        }
+        .sub-trust-note { font-size: 11px; color: var(--color-text-muted); margin: 0; }
+
+        @media (max-width: 640px) {
+          .sub-title { font-size: 22px; }
+          .sub-plans { grid-template-columns: 1fr; }
+          .sub-card-highlight { transform: none; }
+        }
+      `}</style>
     </div>
   )
 }

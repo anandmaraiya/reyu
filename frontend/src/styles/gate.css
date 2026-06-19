@@ -1,0 +1,267 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   GateModal — lazy auth / upgrade overlay
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.gate-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: var(--space-4);
+  animation: fade-in 0.18s ease;
+}
+
+.gate-card {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  width: 100%;
+  max-width: 400px;
+  max-height: 90dvh;
+  overflow-y: auto;
+  position: relative;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+  animation: slide-up 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.gate-close {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+.gate-close:hover { color: var(--color-text-primary); background: var(--color-bg-hover); }
+
+/* Logo */
+.gate-logo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.gate-logo-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+.gate-logo-text {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  letter-spacing: -0.5px;
+}
+
+.gate-heading {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 var(--space-1);
+  letter-spacing: -0.3px;
+}
+.gate-sub {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-4);
+  line-height: 1.5;
+}
+
+/* Form */
+.gate-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.gate-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.gate-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.03em;
+}
+.gate-field input {
+  background: var(--color-bg-base);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-body);
+}
+.gate-field input::placeholder { color: var(--color-text-muted); }
+.gate-field input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-muted);
+}
+
+.gate-error {
+  font-size: 12.5px;
+  color: var(--color-danger);
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--color-danger-muted);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--color-danger);
+}
+
+/* Buttons */
+.gate-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 11px 16px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+  width: 100%;
+  font-family: var(--font-body);
+}
+.gate-btn-primary {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%);
+  color: #fff;
+}
+.gate-btn-primary:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 4px 12px var(--color-primary-muted); }
+.gate-btn-primary:active { transform: translateY(0); }
+.gate-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+.gate-btn-upgrade {
+  margin-top: var(--space-3);
+  font-size: 15px;
+  padding: 13px 16px;
+}
+
+.gate-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+/* Upgrade card */
+.gate-upgrade-content {
+  margin-top: var(--space-2);
+}
+
+.gate-plan-card {
+  background: var(--color-bg-base);
+  border: 1.5px solid var(--color-primary-muted);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}
+.gate-plan-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  margin-bottom: var(--space-2);
+}
+.gate-plan-price {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: var(--space-3);
+}
+.gate-plan-amount {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  letter-spacing: -1px;
+}
+.gate-plan-period {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+.gate-plan-features {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gate-plan-features li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.gate-plan-note {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-align: center;
+  margin: var(--space-2) 0 0;
+}
+
+.gate-usage-bar {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-bg-base);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+}
+
+/* Switcher */
+.gate-switcher {
+  margin-top: var(--space-4);
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.gate-switcher button {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 0 2px;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.15s;
+}
+.gate-switcher button:hover { text-decoration-color: var(--color-primary); }
+
+/* Animations */
+@keyframes spin { to { transform: rotate(360deg); } }

@@ -3,16 +3,29 @@
 1. GET /api/auth/login         -> returns Fyers login URL
 2. User logs in on Fyers; redirected to /api/auth/callback?auth_code=...
 3. Callback exchanges auth_code for access_token and persists it in Redis.
+
+Headless / VM mode:
+  POST /api/auth/set-token      -> inject a pre-obtained Fyers access token
+                                   (for Linux servers where no browser is available)
 """
+import os
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel
 from fyers_apiv3 import fyersModel
 
 from app.config import settings
 from app.fyers import client as fy
 
 router = APIRouter()
+
+
+class SetTokenRequest(BaseModel):
+    access_token: str
+    # Optional: simple shared secret to protect this endpoint on Linux VMs.
+    # Set REYU_TOKEN_SECRET in your .env to require it.
+    secret: str = ""
 
 
 def _session() -> fyersModel.SessionModel:
@@ -58,3 +71,27 @@ async def status():
 async def logout():
     await fy.store.r.delete(fy.TOKEN_KEY)
     return {"ok": True}
+
+
+@router.post("/set-token")
+async def set_token(req: SetTokenRequest):
+    """Headless token injection for Linux VM / CI environments where a browser
+    is not available.
+
+    Usage:
+      1. Obtain a Fyers access token on any browser machine via /api/auth/login
+      2. POST it here: curl -X POST http://<vm>:8000/api/auth/set-token \\
+             -H 'Content-Type: application/json' \\
+             -d '{"access_token":"<token>","secret":"<REYU_TOKEN_SECRET>"}'
+      3. The token is stored in Redis with a 24h TTL (Fyers tokens expire daily).
+
+    Set REYU_TOKEN_SECRET in your .env to require a shared secret.
+    Leave it blank only on private/firewalled machines.
+    """
+    expected_secret = os.environ.get("REYU_TOKEN_SECRET", "")
+    if expected_secret and req.secret != expected_secret:
+        raise HTTPException(403, "Invalid secret")
+    if not req.access_token.strip():
+        raise HTTPException(400, "access_token is required")
+    await fy.set_access_token(req.access_token.strip())
+    return {"ok": True, "message": "Fyers access token updated in Redis (24h TTL)"}

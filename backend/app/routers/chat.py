@@ -126,7 +126,14 @@ async def chat(req: ChatRequest, user: dict | None = Depends(get_current_user)):
 
     if agent_llm.is_enabled():
         history_dicts = [{"role": m.role, "content": m.content} for m in history_msgs]
-        result = await agent_llm.chat_with_llm(req.message, history=history_dicts, user=user)
+        result = await agent_llm.chat_with_llm(
+            req.message,
+            history=history_dicts,
+            user=user,
+            tier=user.get("tier", "anonymous") if user else "anonymous",
+            trial_days_left=user.get("trial_days_left") if user else None,
+            connected_brokers=user.get("connected_brokers") if user else None,
+        )
         tool_used = "llm"
         tool_args_used = None
     else:
@@ -167,6 +174,15 @@ async def chat(req: ChatRequest, user: dict | None = Depends(get_current_user)):
         chart_inline=chart_inline,
         ts=datetime.utcnow().isoformat(),
     )
+
+
+@router.get("/starters")
+async def conversation_starters(user: dict | None = Depends(get_current_user)):
+    """Context-aware conversation starters for the empty chat state."""
+    from app.agent.system_prompt import get_conversation_starters
+    tier = user.get("tier", "free") if user else "anonymous"
+    starters = get_conversation_starters(tier=tier)
+    return {"starters": starters}
 
 
 @router.get("/tools")

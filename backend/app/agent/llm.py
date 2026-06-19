@@ -18,29 +18,13 @@ import httpx
 
 from app.config import settings
 from app.agent.tools import TOOLS, call_tool
+from app.agent.system_prompt import build_system_prompt
 
 log = logging.getLogger("reyu.llm")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MAX_TOOL_ITERATIONS = 4         # safety cap on tool-call loops
 REQUEST_TIMEOUT_SEC = 45.0
-
-SYSTEM_PROMPT = """You are Reyu.ai — an expert Indian options trading co-pilot.
-
-You answer questions about NSE/BSE options: PCR, max pain, OI build-up, IV
-skew, bias, hedging, payoff, scalping, and live positions.
-
-You MUST use the provided tools to fetch live data — never invent numbers.
-Pick the most specific tool. If the user names a symbol use it; otherwise
-default to NIFTY.
-
-Respond conversationally in **at most 5 sentences** plus relevant numbers.
-Use Markdown sparingly: **bold** for the key answer, bullets only when you
-have ≥3 items. Be direct — traders are busy.
-
-If a tool returns a chart URL in its `chart` field, mention "(chart below)"
-in the text so the user knows to scroll — the UI renders it inline.
-"""
 
 
 def is_enabled() -> bool:
@@ -79,6 +63,14 @@ async def chat_with_llm(
     user_message: str,
     history: list[dict] | None = None,
     user: dict | None = None,
+    *,
+    tier: str = "anonymous",
+    trial_days_left: int | None = None,
+    connected_brokers: list[str] | None = None,
+    spot_nifty: float | None = None,
+    spot_banknifty: float | None = None,
+    vix: float | None = None,
+    pcr: float | None = None,
 ) -> dict:
     """Run an agentic loop. Returns the same shape as TOOLS handlers:
        { text, chart?, chart_post?, data? }
@@ -93,8 +85,19 @@ async def chat_with_llm(
         "X-Title": settings.openrouter_app_name,
     }
 
+    # Build dynamic system prompt from context
+    system_prompt = build_system_prompt(
+        tier=tier,
+        trial_days_left=trial_days_left,
+        connected_brokers=connected_brokers,
+        spot_nifty=spot_nifty,
+        spot_banknifty=spot_banknifty,
+        vix=vix,
+        pcr=pcr,
+    )
+
     # Build message list: system → history → current user turn
-    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
     for h in (history or [])[-10:]:
         # Strip any past tool_calls — we only feed text turns to keep the
         # window small and avoid confusing the model with stale tool args.

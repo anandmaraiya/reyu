@@ -192,18 +192,27 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
     display_name = Column(String, nullable=True)
-    tier = Column(String, default="free")             # free | pro | algo
+    # Tiers: free | paid | algo
+    # free  = 15-day trial, 10 strategy saves, 50 backtest runs, no paper/live
+    # paid  = $20/mo, unlimited saves + backtests, paper trading enabled
+    # algo  = paid + live trading via Fyers
+    tier = Column(String, default="free")
     is_active = Column(Boolean, default=True)
-    telegram_chat_id = Column(String, nullable=True, index=True)  # set when user links Telegram
+    telegram_chat_id = Column(String, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Free trial tracking
+    trial_expires_at = Column(DateTime, nullable=True)     # 15 days from created_at
+    strategy_count = Column(Integer, default=0)            # saved strategies (free: max 10)
+    backtest_count = Column(Integer, default=0)            # lifetime runs (free: max 50)
+
     # Subscription / billing fields
-    subscription_id = Column(String, nullable=True, index=True)   # Razorpay subscription_id
-    subscription_status = Column(String, nullable=True)           # active | cancelled | expired | paused
-    subscription_ends_at = Column(DateTime, nullable=True)        # when current paid period ends
-    razorpay_customer_id = Column(String, nullable=True)          # Razorpay customer_id
-    pending_plan = Column(String, nullable=True)                  # plan to switch to at period end
+    subscription_id = Column(String, nullable=True, index=True)
+    subscription_status = Column(String, nullable=True)    # active | cancelled | expired | paused
+    subscription_ends_at = Column(DateTime, nullable=True)
+    razorpay_customer_id = Column(String, nullable=True)
+    pending_plan = Column(String, nullable=True)
 
     __table_args__ = (Index("ix_users_email", "email"),)
 
@@ -454,6 +463,17 @@ async def init_db() -> None:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS razorpay_customer_id VARCHAR",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_plan VARCHAR",
             "CREATE INDEX IF NOT EXISTS ix_users_subscription ON users (subscription_id)",
+        ):
+            try:
+                await conn.execute(text(col_stmt))
+            except Exception:
+                pass
+        # Tier gate / trial columns (added in T4 migration)
+        for col_stmt in (
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS tier VARCHAR DEFAULT 'free'",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_expires_at TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_count INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS backtest_count INTEGER DEFAULT 0",
         ):
             try:
                 await conn.execute(text(col_stmt))

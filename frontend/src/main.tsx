@@ -5,9 +5,18 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import ScrollToTop from './ScrollToTop'
 import { ToastProvider } from './toast'
-import './styles.css'
 
-const qc = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, staleTime: 5000 } } })
+// AuthProvider is inside App — no need to import here.
+
+const qc = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      staleTime: 5_000,
+      retry: 1,
+    },
+  },
+})
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

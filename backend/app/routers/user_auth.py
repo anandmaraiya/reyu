@@ -331,6 +331,31 @@ async def logout(user: dict = Depends(require_user)):
     return {"ok": True}
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/change-password")
+async def change_password(req: ChangePasswordRequest, user_data: dict = Depends(require_user)):
+    """Change authenticated user's password. Requires current password for verification."""
+    if len(req.new_password) < 8:
+        raise HTTPException(400, "New password must be at least 8 characters")
+    async with SessionLocal() as s:
+        result = await s.execute(select(User).where(User.id == user_data["sub"]))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(404, "User not found")
+        if not pwd_context.verify(req.current_password, user.password_hash):
+            raise HTTPException(400, "Current password is incorrect")
+        user.password_hash = pwd_context.hash(req.new_password)
+        await s.commit()
+    # Invalidate all existing sessions so other devices must re-login
+    from app.store import store as st
+    await st.r.delete(f"refresh:{user_data['sub']}")
+    return {"ok": True}
+
+
 @router.post("/tier")
 async def update_tier(req: TierUpdateRequest, user: dict = Depends(require_user)):
     """Update the user's subscription tier. In production this would integrate

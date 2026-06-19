@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     fyers_app_id: str = ""
     fyers_secret_key: str = ""
     fyers_redirect_uri: str = "http://localhost:8000/api/auth/callback"
+    base_url: str = "http://localhost:8000"
     jwt_secret: str = "dev-secret"
     redis_url: str = "redis://redis:6379"
     database_url: str = "postgresql+asyncpg://reyu:reyu@postgres:5432/reyu"

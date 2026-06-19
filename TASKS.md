@@ -1,5 +1,39 @@
 # Reyu.ai — Task tracker
 
+Snapshot: end of session on **2026-06-17**. Agent-first UI overhaul complete.
+New: AuthContext + lazy-gate system, GateModal, App shell, Sidebar, MarketRibbon,
+design token aliases, Reyu agent personality + dynamic system prompt, chat page
+with tray/nudges/starters, ResponseCard + NoDataState, broker abstraction layer,
+tier gate backend, DB migration for trial/usage columns.
+
+## 🟢 This session shipped (2026-06-17)
+
+| # | Item | Status |
+|---|---|---|
+| T1 | Design tokens — Emerald+Indigo+Amber, light/dark, CSS vars, semantic aliases | ✅ |
+| T2 | Broker abstraction: base.py ABC, FyersBroker, ZerodhaBroker, AngelOneBroker, registry, /api/brokers router | ✅ |
+| T3 | Tier gate backend: tier_gate.py deps, User model columns, DB migration (trial_expires_at / strategy_count / backtest_count) | ✅ |
+| T4 | App shell + routing: new App.tsx (lazy imports, full route table, legacy redirects), main.tsx, AuthProvider wired | ✅ |
+| T5 | GateModal (lazy login): 5 modes (login/signup/upgrade/limit/trial), inline modal, no page redirect, retry callback | ✅ |
+| T6 | MarketRibbon: live ticks (NIFTY/BANKNIFTY/FINNIFTY/VIX), market status, expiry countdown, broker pills, demo badge | ✅ |
+| T7 | Sidebar: collapsible (220→52px), all 13 nav items, group labels, lazy-auth gating, user/tier footer | ✅ |
+| T8 | AuthContext: JWT storage, axios interceptor for 401/402, token refresh, gate() system, tier derived state | ✅ |
+| T9 | Reyu agent personality: dynamic system prompt factory (tier/session/VIX/PCR aware), conversation starters API | ✅ |
+| T10 | ReyuAgent chat page: starters grid, message thread, markdown render, chart embed, typing indicator, proactive nudges, tray | ✅ |
+| T11 | ResponseCard + NoDataState + StrategyLifecycleStrip components | ✅ |
+| T12 | layout.css + gate.css + chat.css — full styling for all new components, dark/light theme | ✅ |
+| T13 | /api/chat/starters endpoint + chat endpoint tier context passing | ✅ |
+
+**Zero TypeScript errors** on new files. Legacy pre-existing errors in Strategies.tsx / StrategyDetail.tsx unrelated to this session.
+
+**Lazy-gate philosophy implemented end-to-end:**
+- Anonymous → chat freely, hit gate only when needed (positions, save strategy, upgrade)
+- API 401+gate:login / 402+gate:upgrade → axios interceptor → GateModal opens inline
+- After auth success → pending onSuccess callback fires (retries blocked action)
+- No page redirects anywhere in the auth flow
+
+---
+
 Snapshot: end of session on **2026-06-07**. Working tree dirty —
 strategy framework + frontend + chat tools + real-pricer + EOD bandit
 all landed this session.

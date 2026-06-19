@@ -7,8 +7,10 @@ from fastapi.openapi.utils import get_openapi
 from app.routers import (
     auth, user_auth, options, analytics, watchlist, portfolio, scalping,
     timeseries, stream, orders, strategy, system, journal, notify, admin, chat, charts, telegram,
-    backtest, billing, data_api,webhook_subs, rl, snapshot_health, strategies, data_lake, eod_backtest, intraday
+    backtest, billing, data_api, webhook_subs, rl, snapshot_health, strategies, data_lake, eod_backtest, intraday
 )
+from app.routers import brokers as brokers_router
+from app.routers import market as market_router
 from app.store import store
 from app.db import init_db
 from app import scheduler
@@ -148,6 +150,8 @@ app.include_router(strategies.router, prefix="/api/strategies", tags=["strategie
 app.include_router(data_lake.router, prefix="/api/data", tags=["data-lake"])
 app.include_router(intraday.router, prefix="/api/data", tags=["intraday"])
 app.include_router(eod_backtest.router, prefix="/api/backtest-eod", tags=["backtest-eod"])
+app.include_router(brokers_router.router)  # prefix="/api/brokers" is set inside the router
+app.include_router(market_router.router)   # prefix="/api/market" is set inside the router
 
 
 @app.get("/api/health")

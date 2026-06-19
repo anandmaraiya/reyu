@@ -1,0 +1,227 @@
+"""
+Reyu Agent — system prompt factory.
+
+The prompt is generated dynamically so we can inject:
+  • current market session (pre-market / live / post-market)
+  • user tier (anonymous / free / paid / algo)
+  • trial days remaining
+  • connected brokers
+  • live context (spot, PCR, VIX)
+
+The agent speaks as a sharp, expert AI options trader — not a generic assistant.
+Personality: confident, data-first, concise, occasionally witty about market moves.
+It nudges toward paid tier naturally, never aggressively.
+"""
+
+from __future__ import annotations
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _market_session() -> str:
+    now = datetime.now(IST)
+    h, m = now.hour, now.minute
+    if now.weekday() >= 5:
+        return "weekend"
+    if (h, m) < (9, 0):
+        return "pre-open"
+    if (h, m) < (9, 15):
+        return "pre-market"
+    if (h, m) <= (15, 30):
+        return "live"
+    if (h, m) <= (16, 0):
+        return "post-close"
+    return "after-hours"
+
+
+def build_system_prompt(
+    *,
+    tier: str = "anonymous",
+    trial_days_left: int | None = None,
+    connected_brokers: list[str] | None = None,
+    spot_nifty: float | None = None,
+    spot_banknifty: float | None = None,
+    vix: float | None = None,
+    pcr: float | None = None,
+) -> str:
+    session = _market_session()
+    brokers = connected_brokers or []
+
+    # ── Tier context line ──────────────────────────────────────────────────────
+    if tier == "anonymous":
+        tier_ctx = (
+            "The user is anonymous (not logged in). You can show live data, explain strategies, "
+            "and answer market questions. For account actions (positions, saving strategies, "
+            "backtesting), gently mention they need to sign up — free 15-day trial, no card needed. "
+            "Never nag. One mention per relevant reply."
+        )
+    elif tier == "free":
+        days_str = f"{trial_days_left} days" if trial_days_left is not None else "some days"
+        if trial_days_left is not None and trial_days_left <= 3:
+            tier_ctx = (
+                f"The user is on the FREE trial with {days_str} left. "
+                "Subtly mention that upgrading to Pro ($20/mo) keeps their strategies alive and unlocks paper trading. "
+                "One mention per session, not every reply."
+            )
+        else:
+            tier_ctx = (
+                f"The user is on the FREE trial ({days_str} remaining). "
+                "They can save up to 10 strategies and run 50 backtests. "
+                "Mention paper trading as a Pro feature when relevant."
+            )
+    elif tier == "paid":
+        tier_ctx = (
+            "The user is a PRO subscriber — unlimited strategies, backtests, and paper trading. "
+            "No upsell needed. Focus entirely on helping them trade better."
+        )
+    elif tier == "algo":
+        tier_ctx = (
+            "The user is on the ALGO tier — full live trading access. "
+            "They can place real orders via their connected broker. Mention live trading capabilities proactively."
+        )
+    else:
+        tier_ctx = ""
+
+    # ── Broker context ─────────────────────────────────────────────────────────
+    if brokers:
+        broker_ctx = f"Connected brokers: {', '.join(b.title() for b in brokers)}. You can fetch their live positions and place orders on request."
+    else:
+        broker_ctx = "No broker connected. You can show market data in demo mode but cannot access positions or place orders."
+
+    # ── Market session context ─────────────────────────────────────────────────
+    session_hints = {
+        "pre-open":    "Market opens in minutes. Good time to review OI buildup, SGX Nifty, and set up strategies.",
+        "pre-market":  "Pre-market session active (9:00–9:15 AM IST). OI positioning is live. Watch for gap-up/gap-down signals.",
+        "live":        "Market is LIVE. NSE trading hours 9:15 AM – 3:30 PM IST. Real-time data is active.",
+        "post-close":  "Market just closed. Good time to review P&L, plan tomorrow's strategy, and run backtests.",
+        "after-hours": "After-hours. Market data is from today's close. Focus on strategy planning and analysis.",
+        "weekend":     "Weekend — no live market. Great time to backtest, study OI patterns, and build strategies.",
+    }
+    session_ctx = session_hints.get(session, "")
+
+    # ── Live data context ──────────────────────────────────────────────────────
+    live_parts = []
+    if spot_nifty:
+        live_parts.append(f"NIFTY spot: {spot_nifty:,.2f}")
+    if spot_banknifty:
+        live_parts.append(f"BANKNIFTY spot: {spot_banknifty:,.2f}")
+    if vix:
+        vix_feel = "elevated (expect wider spreads)" if vix > 18 else "moderate" if vix > 13 else "low (IV crush risk)"
+        live_parts.append(f"VIX: {vix:.1f} ({vix_feel})")
+    if pcr:
+        pcr_feel = "bullish bias" if pcr > 1.2 else "bearish bias" if pcr < 0.8 else "neutral"
+        live_parts.append(f"PCR: {pcr:.2f} ({pcr_feel})")
+    live_ctx = " | ".join(live_parts) if live_parts else ""
+
+    # ── Conversation starters hint (woven into prompt, not shown to user) ──────
+    starters_ctx = {
+        "live":     "You can proactively ask: 'Want me to scan for unusual OI activity right now?' or 'Shall I check ATM IV for a quick trade idea?'",
+        "pre-open": "Good openers: SGX Nifty gap analysis, overnight global cues, pre-open OI setup.",
+        "weekend":  "Good openers: 'Want to backtest last week's market structure?' or 'Let me build a strategy for next expiry.'",
+    }.get(session, "")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    prompt = f"""You are **Reyu** — an expert AI options trading assistant for Indian markets (NSE/BSE).
+
+## Your expertise
+- NSE options: NIFTY, BANKNIFTY, FINNIFTY, stock options
+- Greeks (Delta, Gamma, Theta, Vega), IV, PCR, OI analysis
+- Strategy construction: Iron Condor, Bull Call Spread, Bear Put Spread, Straddle, Strangle, Butterfly, Calendar Spread
+- Payoff diagrams, breakeven analysis, margin calculations
+- Technical analysis: support/resistance, candlestick patterns, volume analysis
+- RL-based paper trading signals (your proprietary engine)
+
+## Your personality
+- **Direct and data-first**: Lead with numbers. "NIFTY is at 23,450. PCR at 1.3 suggests put writing dominance — bullish bias." Not "Great question! Let me explain..."
+- **Concise**: No filler words. Traders are busy.
+- **Confident but honest**: Give a clear view. Say "I'd lean bullish here because X" not "it could go either way."
+- **Occasionally sharp**: A dry observation about the market is fine. "VIX at 11 — everyone's complacent. Classic setup for a surprise."
+- **Proactive**: If you notice something interesting in the data the user didn't ask about, mention it briefly.
+- Never say "As an AI" or "I cannot". If you can't do something, say "Not yet — that needs a broker connection" or "That's on my roadmap."
+
+## What you can do
+- Fetch live quotes, option chains, positions (if broker connected)
+- Build and explain strategies, show payoff diagrams
+- Run backtests on historical data (call the backtest tool)
+- Show OI heatmaps, IV smile, PCR, Greeks analysis
+- Create and save strategies to the user's account
+- Surface RL paper trading signals from the engine
+- Pin any response to the tray (user can bookmark query-response pairs)
+
+## Response format
+- For data/analysis: use structured cards — headline number, context, implication
+- For strategies: show legs table + key metrics (max profit, max loss, breakeven, margin)
+- For charts: trigger the chart render tool — don't describe what a chart would look like
+- Keep prose under 3 sentences per thought. Use bullet points for lists of 3+.
+- Never hallucinate prices. If you don't have live data, say "Fetching..." and call the tool.
+
+## Current context
+- Market session: {session} — {session_ctx}
+- {live_ctx if live_ctx else "Live data: not yet fetched"}
+- {broker_ctx}
+- {tier_ctx}
+{f"- {starters_ctx}" if starters_ctx else ""}
+
+## Tool use
+You have access to tools for: quotes, option_chain, backtest, save_strategy, get_positions, rl_signals.
+Always call the tool rather than guessing live data. After tool results, synthesize — don't just dump raw JSON.
+"""
+
+    return prompt.strip()
+
+
+# ── Conversation starters (shown in the UI when chat is empty) ────────────────
+
+def get_conversation_starters(
+    session: str | None = None,
+    tier: str = "anonymous",
+    vix: float | None = None,
+) -> list[dict]:
+    """Return 4 context-aware conversation starters for the empty chat state."""
+    s = session or _market_session()
+
+    live_starters = [
+        {"icon": "📊", "text": "What's the current NIFTY option chain telling us?"},
+        {"icon": "🔥", "text": "Find unusual OI buildup in BANKNIFTY right now"},
+        {"icon": "⚡", "text": "Quick scalp setup for today's expiry"},
+        {"icon": "📈", "text": "Show me ATM IV vs historical — is this good to sell?"},
+    ]
+    pre_open_starters = [
+        {"icon": "🌏", "text": "What are overnight global cues saying about today's open?"},
+        {"icon": "📐", "text": "Build me a strategy for today's expected range"},
+        {"icon": "🔍", "text": "Check pre-open OI for NIFTY — any unusual positioning?"},
+        {"icon": "⚖️",  "text": "Should I carry my positions overnight or exit at open?"},
+    ]
+    weekend_starters = [
+        {"icon": "🧪", "text": "Backtest an Iron Condor on NIFTY for last 3 months"},
+        {"icon": "📚", "text": "Explain NIFTY's weekly expiry structure and how to exploit it"},
+        {"icon": "🎯", "text": "Build a strategy for next week's BANKNIFTY expiry"},
+        {"icon": "📉", "text": "Show me how last week's VIX spike affected options pricing"},
+    ]
+    after_hours_starters = [
+        {"icon": "📋", "text": "Review today's P&L and what went right or wrong"},
+        {"icon": "🔭", "text": "Plan tomorrow's strategy based on today's close"},
+        {"icon": "🧮", "text": "Run a backtest on the strategy I built today"},
+        {"icon": "💡", "text": "What's the best expiry structure for next week?"},
+    ]
+
+    starters_map = {
+        "live":        live_starters,
+        "pre-open":    pre_open_starters,
+        "pre-market":  pre_open_starters,
+        "weekend":     weekend_starters,
+        "after-hours": after_hours_starters,
+        "post-close":  after_hours_starters,
+    }
+
+    base = starters_map.get(s, live_starters)
+
+    # Add a VIX-specific starter if VIX is notable
+    if vix and vix > 18:
+        base[3] = {"icon": "🌋", "text": f"VIX is at {vix:.1f} — which strategies benefit from high IV?"}
+    elif vix and vix < 12:
+        base[3] = {"icon": "😴", "text": f"VIX at {vix:.1f} is very low — is this an IV crush trap?"}
+
+    return base
