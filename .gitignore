@@ -11,4 +11,7 @@ __pycache__/
 
 frontend/node_modules/
 
+# Ignore runtime data dirs but NOT the Python app.data module
 data/
+!backend/app/data/
+!backend/app/data/**
