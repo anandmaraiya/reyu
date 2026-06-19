@@ -141,11 +141,11 @@ export default function StrategyDetail() {
       return r.data
     },
     onSuccess: () => {
-      toast.show('Backtest queued — auto-refreshes when done', 'success')
+      toast.push('success', 'Backtest queued — auto-refreshes when done')
       qc.invalidateQueries({ queryKey: ['runs', id] })
     },
     onError: (e: any) =>
-      toast.show(e?.response?.data?.detail || 'Backtest failed', 'error'),
+      toast.push('error', e?.response?.data?.detail || 'Backtest failed'),
   })
 
   if (!strat) {
@@ -299,11 +299,11 @@ function LiveTab({
     mutationFn: () =>
       api.post(`/api/strategies/${strategyId}/promote?mode=PAPER_LIVE`),
     onSuccess: () => {
-      toast.show('Promoted to PAPER_LIVE — scheduler will start firing trades', 'success')
+      toast.push('success', 'Promoted to PAPER_LIVE — scheduler will start firing trades')
       qc.invalidateQueries({ queryKey: ['strategy', strategyId] })
     },
     onError: (e: any) =>
-      toast.show(e?.response?.data?.detail || 'Promote failed', 'error'),
+      toast.push('error', e?.response?.data?.detail || 'Promote failed'),
   })
 
   const halt = useMutation({
@@ -312,12 +312,12 @@ function LiveTab({
         `/api/strategies/runs/${data?.active_run?.id}/halt`,
       ),
     onSuccess: () => {
-      toast.show('Halted — open positions exited at last price', 'success')
+      toast.push('success', 'Halted — open positions exited at last price')
       qc.invalidateQueries({ queryKey: ['live-monitor', strategyId] })
       qc.invalidateQueries({ queryKey: ['strategy', strategyId] })
     },
     onError: (e: any) =>
-      toast.show(e?.response?.data?.detail || 'Halt failed', 'error'),
+      toast.push('error', e?.response?.data?.detail || 'Halt failed'),
   })
 
   if (isLoading) return <div style={{ color: 'var(--muted)' }}>Loading…</div>

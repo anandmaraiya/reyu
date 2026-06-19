@@ -82,10 +82,10 @@ export default function Strategies() {
   const archive = useMutation({
     mutationFn: (id: string) => api.post(`/api/strategies/${id}/archive`),
     onSuccess: () => {
-      toast.show('Archived', 'success')
+      toast.push('success', 'Archived')
       qc.invalidateQueries({ queryKey: ['strategies'] })
     },
-    onError: (e: any) => toast.show(e?.response?.data?.detail || 'Archive failed', 'error'),
+    onError: (e: any) => toast.push('error', e?.response?.data?.detail || 'Archive failed'),
   })
 
   const items = data?.items || []
