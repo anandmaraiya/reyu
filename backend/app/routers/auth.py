@@ -58,7 +58,11 @@ async def callback(auth_code: str = Query(...), state: str | None = None):
     if not token:
         raise HTTPException(400, f"Fyers token exchange failed: {resp}")
     await fy.set_access_token(token)
-    return RedirectResponse("http://localhost:5173/?login=ok")
+    # FRONTEND_URL may be set in .env for VM deployments (e.g. http://35.202.153.147).
+    # Falls back to "/" which works for same-origin nginx deployments.
+    frontend_url = os.environ.get("FRONTEND_URL", "")
+    redirect_to = f"{frontend_url}/?fyers=ok" if frontend_url else "/?fyers=ok"
+    return RedirectResponse(redirect_to)
 
 
 @router.get("/status")

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import { useToast } from '../toast'
+import { useAuth } from '../context/AuthContext'
 
 type Tab = 'account' | 'trading' | 'notify' | 'api_keys' | 'event_subs' | 'appearance' | 'shortcuts'
 
@@ -35,6 +36,7 @@ const DEFAULT_RISK: RiskPrefs = {
 
 export default function Settings({ theme, setTheme }: { theme: string; setTheme: (t: 'dark' | 'light') => void }) {
   const t = useToast()
+  const { user: currentUser, logout } = useAuth()
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('account')
   const [url, setUrl] = useState('')
@@ -70,10 +72,6 @@ export default function Settings({ theme, setTheme }: { theme: string; setTheme:
       t.push('error', 'Could not get Fyers login URL — is the backend running?')
     }
   }
-
-  const currentUser = (() => {
-    try { return JSON.parse(localStorage.getItem('user') || 'null') } catch { return null }
-  })()
 
   const { data: status } = useQuery<any>({
     queryKey: ['system-status'],
@@ -125,6 +123,23 @@ export default function Settings({ theme, setTheme }: { theme: string; setTheme:
         <section className="col" style={{ flex: 1, minWidth: 0 }}>
           {tab === 'account' && (
             <div className="col" style={{ gap: 16, maxWidth: 640 }}>
+              {/* User info + logout */}
+              {currentUser && (
+                <div className="card">
+                  <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 15 }}>{currentUser.display_name || currentUser.email}</div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)' }}>{currentUser.email}</div>
+                    </div>
+                    <button
+                      onClick={() => { logout(); window.location.href = '/' }}
+                      style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 6, padding: '6px 16px', cursor: 'pointer', fontWeight: 600 }}>
+                      Sign Out
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* System status card */}
               <div className="card">
                 <h3>Account & Connectivity</h3>
@@ -141,6 +156,9 @@ export default function Settings({ theme, setTheme }: { theme: string; setTheme:
                 <div className="row" style={{ marginTop: 12, gap: 8 }}>
                   <button className="primary" onClick={reAuthFyers}>Re-authenticate Fyers</button>
                   <a className="ghost" href="/subscription" style={{ padding: '6px 12px', textDecoration: 'none' }}>Manage subscription</a>
+                  {!currentUser && (
+                    <a className="primary" href="/login" style={{ padding: '6px 12px', textDecoration: 'none' }}>Sign In / Register</a>
+                  )}
                 </div>
               </div>
 
