@@ -9,7 +9,6 @@ __pycache__/
 # To exclude: uncomment below
 # ai-context/
 
-frontend/dist/
 frontend/node_modules/
 
 data/
