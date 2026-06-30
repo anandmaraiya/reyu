@@ -103,8 +103,34 @@ async def toggle_policy(underlying: str, on: bool = Query(True), s: AsyncSession
 @router.get("/recommendations")
 async def recommendations(top: int = Query(20, ge=1, le=200),
                           min_conviction: float = Query(0.10, ge=0.0, le=1.0)):
-    """Strongest current signals across the universe — read-only, opens no trades."""
-    scores = await score_universe()
+    """Strongest current signals across the universe — read-only, opens no trades.
+
+    Cached in Redis for 60s — score_universe() iterates 186 tracked symbols
+    running RL inference on each (~10-14s uncached). 60s TTL means even
+    a fresh page load every second of polling only hits the heavy path
+    once per minute; the actual data only changes that often anyway as
+    the snapshot poller is on the same 60s cadence.
+    """
+    import json
+    from app.store import store
+    cache_key = "rl:recommendations:scored_universe"
+
+    # Try cache first — same scored universe powers any (top, min_conviction).
+    scores = None
+    try:
+        cached = await store.r.get(cache_key)
+        if cached:
+            scores = json.loads(cached)
+    except Exception:
+        pass
+
+    if scores is None:
+        scores = await score_universe()
+        try:
+            await store.r.set(cache_key, json.dumps(scores), ex=60)
+        except Exception:
+            pass
+
     actionable = [s for s in scores if s["action"] != "FLAT" and s["conviction"] >= min_conviction]
     actionable.sort(key=lambda r: -r["conviction"])
     return {"count": len(actionable), "top": actionable[:top]}

@@ -25,6 +25,40 @@ engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=Tr
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
+class RegimeRouterPaperTrade(Base):
+    """One row per regime-router decision per day per underlying.
+
+    Lifecycle:
+      morning_decision (09:25 IST) → writes regime, action, entry_legs,
+        entry_premium_total. status='OPEN'.
+      eod_close (15:20 IST) → fills exit_premium_total, pnl_inr,
+        status='TP'/'SL'/'FLAT'.
+
+    Self-contained — doesn't go through strategy_specs / strategy_runs.
+    The router is too different in shape (4-leg condor variants) to
+    cleanly fit there.
+    """
+    __tablename__ = "regime_router_paper_trade"
+    trade_date = Column(DateTime, primary_key=True)
+    underlying = Column(String, primary_key=True)
+    regime = Column(String)                    # TREND_UP / TREND_DOWN / SIDEWAYS / FLAT
+    action = Column(String)                    # LONG_CE / LONG_PE / IRON_CONDOR / SKIP
+    mom_3d_pct = Column(Float)
+    pcr_oi = Column(Float)
+    atm_strike = Column(Float)
+    # Leg details serialized as JSON. For LONG_CE/PE one strike. For
+    # IRON_CONDOR 4 strikes (sc, sp, lc, lp).
+    legs_json = Column(String)
+    entry_premium_total = Column(Float)        # credit for condor, debit for long
+    exit_premium_total = Column(Float)
+    pnl_per_lot = Column(Float)
+    pnl_inr = Column(Float)
+    lot_size = Column(Integer, default=65)
+    status = Column(String, default="OPEN")    # OPEN / TP / SL / FLAT / SKIP
+    entry_ts = Column(DateTime)
+    exit_ts = Column(DateTime)
+
+
 class Instrument(Base):
     __tablename__ = "instruments"
     symbol = Column(String, primary_key=True)        # e.g. NSE:RELIANCE-EQ
@@ -731,6 +765,28 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_strategy_trades_run ON strategy_trades (run_id, entry_ts)",
             "CREATE INDEX IF NOT EXISTS ix_strategy_trades_strategy ON strategy_trades (strategy_id, strategy_version)",
             "CREATE INDEX IF NOT EXISTS ix_option_eod_under_exp ON option_eod (underlying, expiry, trade_date)",
+            """
+            CREATE TABLE IF NOT EXISTS regime_router_paper_trade (
+                trade_date TIMESTAMP NOT NULL,
+                underlying VARCHAR NOT NULL,
+                regime VARCHAR,
+                action VARCHAR,
+                mom_3d_pct FLOAT,
+                pcr_oi FLOAT,
+                atm_strike FLOAT,
+                legs_json TEXT,
+                entry_premium_total FLOAT,
+                exit_premium_total FLOAT,
+                pnl_per_lot FLOAT,
+                pnl_inr FLOAT,
+                lot_size INTEGER DEFAULT 65,
+                status VARCHAR DEFAULT 'OPEN',
+                entry_ts TIMESTAMP,
+                exit_ts TIMESTAMP,
+                PRIMARY KEY (trade_date, underlying)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_rr_paper_date ON regime_router_paper_trade (trade_date DESC)",
             """
             CREATE TABLE IF NOT EXISTS option_intraday (
                 ts TIMESTAMP NOT NULL,

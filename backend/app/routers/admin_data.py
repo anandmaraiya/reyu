@@ -281,3 +281,83 @@ async def scheduler_status(_user: dict = Depends(require_superadmin)):
             "next_run_time": j.next_run_time.isoformat() if j.next_run_time else None,
         })
     return {"running": True, "jobs": jobs}
+
+
+# ── 5. REGIME-ROUTER PAPER TRADES (live) ──────────────────────────────
+@router.get("/regime-router/trades")
+async def regime_router_trades(
+    days: int = Query(30, ge=1, le=365),
+    _user: dict = Depends(require_superadmin),
+):
+    """Recent regime-router paper trades. Powers the live-strategy card."""
+    from app.db import RegimeRouterPaperTrade
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    async with SessionLocal() as s:
+        rows = (await s.execute(
+            select(RegimeRouterPaperTrade)
+            .where(RegimeRouterPaperTrade.trade_date >= cutoff)
+            .order_by(RegimeRouterPaperTrade.trade_date.desc())
+        )).scalars().all()
+
+        out = []
+        wins = losses = skips = 0
+        total_pnl = 0.0
+        for r in rows:
+            if r.status == "TP":
+                wins += 1
+            elif r.status == "SL":
+                losses += 1
+            elif r.status == "SKIP":
+                skips += 1
+            if r.pnl_inr:
+                total_pnl += r.pnl_inr
+            out.append({
+                "date": r.trade_date.date().isoformat() if r.trade_date else None,
+                "underlying": r.underlying,
+                "regime": r.regime,
+                "action": r.action,
+                "mom_3d_pct": r.mom_3d_pct,
+                "pcr_oi": r.pcr_oi,
+                "atm_strike": r.atm_strike,
+                "entry_premium": r.entry_premium_total,
+                "exit_premium": r.exit_premium_total,
+                "pnl_inr": r.pnl_inr,
+                "status": r.status,
+            })
+        return {
+            "days": days,
+            "trades": out,
+            "summary": {
+                "total": len(rows),
+                "wins": wins, "losses": losses, "skips": skips,
+                "win_rate": round(wins / max(1, wins + losses), 3),
+                "total_pnl_inr": round(total_pnl, 2),
+            },
+        }
+
+
+@router.post("/regime-router/run-now")
+async def regime_router_run_now(
+    job: str = Query(..., regex="^(morning|close)$"),
+    _user: dict = Depends(require_superadmin),
+):
+    """Fire the regime-router morning or close cycle on-demand."""
+    from app.strategy import regime_router_live as rr
+    fn = rr.morning_decision if job == "morning" else rr.eod_close
+    started = datetime.now(timezone.utc)
+    try:
+        res = await fn()
+        ok = True
+        err = None
+    except Exception as e:
+        ok = False
+        err = str(e)
+        res = None
+        log.exception("regime-router %s failed", job)
+    ended = datetime.now(timezone.utc)
+    return {
+        "job": f"regime_router_{job}",
+        "ok": ok, "error": err,
+        "duration_sec": round((ended - started).total_seconds(), 1),
+        "result": res,
+    }

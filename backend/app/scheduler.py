@@ -398,6 +398,26 @@ async def weekly_long_backfill_job() -> None:
              total, len(targets))
 
 
+async def regime_router_morning_job() -> None:
+    """09:25 IST — regime-router classifies + opens paper trade for today."""
+    from app.strategy.regime_router_live import morning_decision
+    try:
+        res = await morning_decision()
+        log.info("regime-router morning: %s", res)
+    except Exception as e:
+        log.exception("regime-router morning failed: %s", e)
+
+
+async def regime_router_close_job() -> None:
+    """15:20 IST — close every OPEN regime-router paper trade."""
+    from app.strategy.regime_router_live import eod_close
+    try:
+        res = await eod_close()
+        log.info("regime-router close: %s", res)
+    except Exception as e:
+        log.exception("regime-router close failed: %s", e)
+
+
 async def dataset_health_check() -> None:
     """Daily 07:30 IST log — what did we capture yesterday across each table.
 
@@ -464,6 +484,16 @@ def start() -> None:
     scheduler.add_job(dataset_health_check,
                       CronTrigger(hour=2, minute=0),
                       id="dataset_health", max_instances=1, coalesce=True)
+    # Regime-router morning decision — 09:25 IST = 03:55 UTC, Mon-Fri.
+    # 5 min before market open so legs price off the most recent snapshot.
+    scheduler.add_job(regime_router_morning_job,
+                      CronTrigger(day_of_week="mon-fri", hour=3, minute=55),
+                      id="regime_router_morning", max_instances=1, coalesce=True)
+    # Regime-router EOD close — 15:20 IST = 09:50 UTC, Mon-Fri.
+    # 10 min before market close to avoid the closing-auction chaos.
+    scheduler.add_job(regime_router_close_job,
+                      CronTrigger(day_of_week="mon-fri", hour=9, minute=50),
+                      id="regime_router_close", max_instances=1, coalesce=True)
     scheduler.start()
     log.info("scheduler started — high every %ds, low every %ds, RL decide 300s, "
              "RL sweep 60s, Bhavcopy 18:00 IST Mon-Fri",

@@ -85,14 +85,20 @@ export default function Chat() {
   }, [user?.email])
 
   useEffect(() => {
-    api.get('/api/rl/paper-trades').then(r => {
-      setNudges((r.data.trades || []).slice(0, 3).map((t: any) => ({
-        id: t.id || String(Math.random()),
-        icon: t.side === 'BUY' ? '📈' : '📉',
-        text: `RL: ${t.side} ${t.symbol?.split(':')[1] ?? t.symbol}`,
-        query: `Tell me about the RL paper trade signal on ${t.symbol}`,
-        live: true,
-      })))
+    // /api/rl/trades returns an array of RLTrade rows directly. Fields:
+    // {id, underlying, action: 'LONG'|'SHORT', leg_symbol, status, ...}
+    api.get('/api/rl/trades?limit=10').then(r => {
+      const trades = Array.isArray(r.data) ? r.data : []
+      setNudges(trades.slice(0, 3).map((t: any) => {
+        const sym = t.underlying?.split(':')[1] ?? t.underlying
+        return {
+          id: t.id || String(Math.random()),
+          icon: t.action === 'LONG' ? '📈' : '📉',
+          text: `RL: ${t.action} ${sym}`,
+          query: `Tell me about the RL paper trade signal on ${t.underlying}`,
+          live: true,
+        }
+      }))
     }).catch(() => {})
   }, [user?.email])
 
