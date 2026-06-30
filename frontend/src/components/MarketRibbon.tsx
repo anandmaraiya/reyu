@@ -21,7 +21,11 @@ interface BrokerStatus {
   connected: boolean
 }
 
-const BASE_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+// Empty = relative paths (same-origin via Caddy/nginx in front of the stack).
+// Localhost fallback would break public deployments — the browser would try
+// 127.0.0.1:8000 from a public origin and Chrome's Private Network Access
+// rules block it.
+const BASE_URL = import.meta.env.VITE_API_BASE || ''
 
 const WATCH_SYMBOLS = [
   { symbol: 'NSE:NIFTY50-INDEX',  label: 'NIFTY' },
