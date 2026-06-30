@@ -676,6 +676,51 @@ async def init_db() -> None:
             "SELECT create_hypertable('option_contract_1m', 'ts', if_not_exists => TRUE, migrate_data => TRUE, chunk_time_interval => INTERVAL '7 days')",
             "CREATE INDEX IF NOT EXISTS ix_opt_contract_under_ts ON option_contract_1m (underlying, ts)",
             "CREATE INDEX IF NOT EXISTS ix_opt_contract_lookup ON option_contract_1m (underlying, expiry, strike, option_type, ts)",
+            # Timescale compression — chunks older than 14 days compress to
+            # ~10% of original size. Keeps the dataset growing for years
+            # without disk blowup. Idempotent — `do $$ ... $$` blocks check
+            # before adding the policy.
+            """
+            DO $$
+            BEGIN
+                BEGIN
+                    ALTER TABLE option_contract_1m SET (
+                        timescaledb.compress,
+                        timescaledb.compress_segmentby = 'symbol,underlying',
+                        timescaledb.compress_orderby = 'ts DESC'
+                    );
+                EXCEPTION WHEN OTHERS THEN NULL;
+                END;
+                BEGIN
+                    PERFORM add_compression_policy('option_contract_1m', INTERVAL '14 days');
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END;
+                BEGIN
+                    ALTER TABLE option_strike_snapshot SET (
+                        timescaledb.compress,
+                        timescaledb.compress_segmentby = 'underlying',
+                        timescaledb.compress_orderby = 'ts DESC'
+                    );
+                EXCEPTION WHEN OTHERS THEN NULL;
+                END;
+                BEGIN
+                    PERFORM add_compression_policy('option_strike_snapshot', INTERVAL '14 days');
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END;
+                BEGIN
+                    ALTER TABLE tick_1m SET (
+                        timescaledb.compress,
+                        timescaledb.compress_segmentby = 'symbol',
+                        timescaledb.compress_orderby = 'ts DESC'
+                    );
+                EXCEPTION WHEN OTHERS THEN NULL;
+                END;
+                BEGIN
+                    PERFORM add_compression_policy('tick_1m', INTERVAL '14 days');
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END;
+            END $$;
+            """,
             "CREATE INDEX IF NOT EXISTS ix_api_keys_user ON api_keys (user_id)",
             "CREATE INDEX IF NOT EXISTS ix_api_keys_hash ON api_keys (key_hash)",
             "CREATE INDEX IF NOT EXISTS ix_rl_trade_under_ts ON rl_trade (underlying, entry_ts DESC)",

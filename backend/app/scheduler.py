@@ -301,13 +301,16 @@ async def morning_batch_job() -> None:
 async def daily_options_history_job() -> None:
     """09:00 IST daily backfill of per-contract 1-min option history.
 
-    Runs JUST BEFORE market open (15min) so the live week's expiry has
-    fresh history for any strategy that consumes option_contract_1m.
+    Architecture (continuous dataset capture):
+      * Indices (6):      7-day window, ATM±15 — small + critical
+      * Top-10 stocks:    7-day window, ATM±10 — second priority
+    Total ~10-15 minutes of Fyers calls. Re-runs are idempotent (UPSERT
+    on conflict do nothing); the existing rows stay, only new minutes
+    land.
 
-    Uses the corruption-resistant `backfill_underlying` (window-clamp +
-    spot-substitution rejection). For each tier-1 underlying it pulls
-    7 days of intraday history — short window keeps the call budget
-    well inside Fyers rate limits.
+    The heavier 100-day backfill happens (a) auto-fired on Fyers OAuth
+    callback, (b) weekly via weekly_long_backfill_job (Sunday 04:00 IST
+    when market is closed and the event loop is free).
     """
     from app.data import option_history
     from app.fyers import client as fy
@@ -316,29 +319,107 @@ async def daily_options_history_job() -> None:
         log.info("daily options history: skipped — Fyers in demo mode")
         return
 
-    targets = [
+    indices = [
         "NSE:NIFTY50-INDEX",
         "NSE:NIFTYBANK-INDEX",
         "NSE:FINNIFTY-INDEX",
+        "NSE:MIDCPNIFTY-INDEX",
+    ]
+    top_stocks = [
+        "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:ICICIBANK-EQ",
+        "NSE:INFY-EQ", "NSE:TCS-EQ", "NSE:SBIN-EQ",
+        "NSE:BHARTIARTL-EQ", "NSE:AXISBANK-EQ",
+        "NSE:KOTAKBANK-EQ", "NSE:LT-EQ",
     ]
     out: dict = {}
-    for u in targets:
+    for u in indices + top_stocks:
         try:
             r = await option_history.backfill_underlying(
                 u, history_back_days=7,
-                forward_weeklies=2, strikes_around_atm=10,
+                forward_weeklies=2,
+                strikes_around_atm=15 if "INDEX" in u else 10,
                 polite_delay_sec=0.3,
             )
             out[u] = {
-                "inserted": r.get("candles_inserted"),
-                "tainted_rejected": r.get("contracts_tainted_spot_substitution"),
-                "dead_skipped": r.get("contracts_dead_before_window"),
-                "failed": r.get("contracts_failed"),
+                "ins": r.get("candles_inserted"),
+                "tainted": r.get("contracts_tainted_spot_substitution"),
+                "dead": r.get("contracts_dead_before_window"),
+                "fail": r.get("contracts_failed"),
             }
         except Exception as e:
             out[u] = {"error": str(e)}
             log.exception("daily options history %s failed", u)
-    log.info("daily options history: %s", out)
+    total_inserted = sum(v.get("ins", 0) for v in out.values() if isinstance(v, dict))
+    log.info("daily options history: %d candles across %d underlyings | %s",
+             total_inserted, len(out), out)
+
+
+async def weekly_long_backfill_job() -> None:
+    """Sunday 04:00 IST — heavy 100-day backfill across full universe.
+
+    Market is closed (Sun = weekend), so the per-minute snapshot poller
+    isn't competing for Fyers throughput. ~30-60 min runtime depending
+    on Fyers latency.
+
+    Idempotent — existing candles aren't overwritten.
+    """
+    from app.data import option_history
+    from app.fyers import client as fy
+
+    if await fy.is_demo():
+        log.info("weekly long backfill: skipped — Fyers in demo mode")
+        return
+
+    targets = [
+        "NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:FINNIFTY-INDEX",
+        "NSE:MIDCPNIFTY-INDEX",
+        "NSE:RELIANCE-EQ", "NSE:HDFCBANK-EQ", "NSE:ICICIBANK-EQ",
+        "NSE:INFY-EQ", "NSE:TCS-EQ", "NSE:SBIN-EQ",
+        "NSE:BHARTIARTL-EQ", "NSE:AXISBANK-EQ", "NSE:KOTAKBANK-EQ",
+        "NSE:LT-EQ", "NSE:ITC-EQ", "NSE:HINDUNILVR-EQ",
+        "NSE:BAJFINANCE-EQ", "NSE:MARUTI-EQ", "NSE:M&M-EQ",
+        "NSE:TATAMOTORS-EQ",
+    ]
+    total = 0
+    for u in targets:
+        try:
+            r = await option_history.backfill_underlying(
+                u, history_back_days=100,
+                forward_weeklies=2,
+                strikes_around_atm=15 if "INDEX" in u else 10,
+                polite_delay_sec=0.3,
+            )
+            total += r.get("candles_inserted", 0)
+            log.info("weekly long backfill %s: +%d candles", u,
+                     r.get("candles_inserted", 0))
+        except Exception as e:
+            log.exception("weekly long backfill %s failed", u)
+    log.info("weekly long backfill: total %d new candles across %d underlyings",
+             total, len(targets))
+
+
+async def dataset_health_check() -> None:
+    """Daily 07:30 IST log — what did we capture yesterday across each table.
+
+    Lets a glance at the logs confirm the dataset is growing. A sudden
+    drop in any counter is the canary for Fyers auth/quota issues.
+    """
+    try:
+        from sqlalchemy import select, func
+        from app.db import SessionLocal, OptionContract1m, OptionStrikeSnapshot, Tick1m
+        async with SessionLocal() as s:
+            counts = {}
+            for label, model, ts_col in [
+                ("option_contract_1m", OptionContract1m, OptionContract1m.ts),
+                ("option_strike_snapshot", OptionStrikeSnapshot, OptionStrikeSnapshot.ts),
+                ("tick_1m", Tick1m, Tick1m.ts),
+            ]:
+                total = (await s.execute(select(func.count()).select_from(model))).scalar()
+                latest = (await s.execute(select(func.max(ts_col)))).scalar()
+                counts[label] = {"rows": total, "latest": latest.isoformat() if latest else None}
+        log.info("dataset health: %s", counts)
+    except Exception as e:
+        log.exception("dataset health check failed: %s", e)
 
 
 def start() -> None:
@@ -368,11 +449,21 @@ def start() -> None:
                       id="morning_batch", max_instances=1, coalesce=True)
     # Daily options-1m history — 09:00 IST = 03:30 UTC, Mon-Fri
     # Runs JUST BEFORE 09:15 IST market open so live-week contracts have
-    # fresh per-strike intraday data. Tighter window (7 days) than the
-    # 08:00 morning_batch — this is the "everyday at 9am onwards" refresh.
+    # fresh per-strike intraday data. Covers 4 indices + top-10 stocks.
     scheduler.add_job(daily_options_history_job,
                       CronTrigger(day_of_week="mon-fri", hour=3, minute=30),
                       id="daily_options_history", max_instances=1, coalesce=True)
+    # Weekly long backfill — Sunday 04:00 IST = Sat 22:30 UTC. Market is
+    # closed, no contention with the per-minute poller. Heavy 100-day
+    # pull across 20 underlyings — keeps the dataset filled out.
+    scheduler.add_job(weekly_long_backfill_job,
+                      CronTrigger(day_of_week="sun", hour=4, minute=0),
+                      id="weekly_long_backfill", max_instances=1, coalesce=True)
+    # Dataset health check — 07:30 IST = 02:00 UTC daily. Logs rowcounts
+    # per table so a glance at logs confirms the dataset is growing.
+    scheduler.add_job(dataset_health_check,
+                      CronTrigger(hour=2, minute=0),
+                      id="dataset_health", max_instances=1, coalesce=True)
     scheduler.start()
     log.info("scheduler started — high every %ds, low every %ds, RL decide 300s, "
              "RL sweep 60s, Bhavcopy 18:00 IST Mon-Fri",
