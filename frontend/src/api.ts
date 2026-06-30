@@ -7,7 +7,7 @@ export const api = axios.create({
 
 // Attach access token to every request
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token')
+  const token = localStorage.getItem('reyu_access_token')
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
@@ -21,21 +21,21 @@ api.interceptors.response.use(
     const original = err.config as any
     if (err.response?.status === 401 && !original._retry) {
       original._retry = true
-      const refresh = localStorage.getItem('refresh_token')
+      const refresh = localStorage.getItem('reyu_refresh_token')
       if (refresh) {
         try {
           const { data } = await axios.post(
             `${import.meta.env.VITE_API_BASE || ''}/api/user/refresh`,
             { refresh_token: refresh },
           )
-          localStorage.setItem('access_token', data.access_token)
-          localStorage.setItem('refresh_token', data.refresh_token)
+          localStorage.setItem('reyu_access_token', data.access_token)
+          localStorage.setItem('reyu_refresh_token', data.refresh_token)
           original.headers.Authorization = `Bearer ${data.access_token}`
           return api(original)
         } catch {
           // refresh failed — clear tokens, let the page redirect
-          localStorage.removeItem('access_token')
-          localStorage.removeItem('refresh_token')
+          localStorage.removeItem('reyu_access_token')
+          localStorage.removeItem('reyu_refresh_token')
         }
       }
     }
