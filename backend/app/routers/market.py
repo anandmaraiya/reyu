@@ -71,6 +71,34 @@ def _demo_ticks() -> list[dict]:
     ]
 
 
+async def _last_db_ticks() -> list[dict]:
+    """Fallback: last row per symbol from tick_1m. Real data, just stale —
+    much better than demo values when Fyers is down for a few hours."""
+    try:
+        from sqlalchemy import select, func
+        from app.db import SessionLocal, Tick1m
+        ticks: list[dict] = []
+        async with SessionLocal() as s:
+            for sym in _SYMBOLS:
+                row = (await s.execute(
+                    select(Tick1m).where(Tick1m.symbol == sym)
+                    .order_by(Tick1m.ts.desc()).limit(1)
+                )).scalar_one_or_none()
+                if not row or row.close is None:
+                    continue
+                ticks.append({
+                    "symbol": sym,
+                    "label": _DEMO.get(sym, {}).get("label", sym.split(":")[1]),
+                    "ltp": round(float(row.close), 2),
+                    "close": round(float(row.open), 2),
+                    "updated_at": row.ts.replace(tzinfo=timezone.utc).isoformat() if row.ts.tzinfo is None else row.ts.isoformat(),
+                    "stale": True,            # signal to UI: not live
+                })
+        return ticks
+    except Exception:
+        return []
+
+
 @router.get("/ticks")
 async def get_ticks(symbols: Optional[str] = None):
     """
@@ -98,7 +126,17 @@ async def get_ticks(symbols: Optional[str] = None):
             live = [t for t in live if t["symbol"] in sym_set]
         return {"ticks": live, "demo": False}
 
-    # 3. Demo fallback
+    # 3. Last captured tick_1m row per symbol (real, but possibly stale by
+    # minutes/hours/days). Much better than demo when Fyers is offline.
+    db = await _last_db_ticks()
+    if db:
+        if symbols:
+            sym_set = {s.strip() for s in symbols.split(",")}
+            db = [t for t in db if t["symbol"] in sym_set]
+        if db:
+            return {"ticks": db, "demo": False, "stale": True}
+
+    # 4. Demo fallback — only when DB has nothing for the requested symbols.
     ticks = _demo_ticks()
     if symbols:
         sym_set = {s.strip() for s in symbols.split(",")}

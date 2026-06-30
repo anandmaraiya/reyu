@@ -97,6 +97,40 @@ async def fyers_snapshot_now():
     return await fyers_sync.snapshot_today()
 
 
+@router.post("/option-history/backfill-all-now")
+async def backfill_all_now(
+    background: BackgroundTasks,
+    history_back_days: int = Query(100, ge=1, le=100),
+    forward_weeklies: int = Query(2, ge=0, le=6),
+    strikes_around_atm: int = Query(15, ge=1, le=20),
+):
+    """Trigger backfill for ALL tier-1 underlyings immediately. Same call
+    the OAuth callback fires after Fyers login — use this to re-run if
+    a previous backfill was killed mid-flight."""
+    targets = [
+        "NSE:NIFTY50-INDEX",
+        "NSE:NIFTYBANK-INDEX",
+        "NSE:FINNIFTY-INDEX",
+    ]
+    async def _runner():
+        for u in targets:
+            try:
+                res = await option_history.backfill_underlying(
+                    u, history_back_days=history_back_days,
+                    forward_weeklies=forward_weeklies,
+                    strikes_around_atm=strikes_around_atm,
+                    polite_delay_sec=0.3,
+                )
+                log.info("backfill-all-now %s: %s", u, res)
+            except Exception as e:
+                log.exception("backfill-all-now %s failed: %s", u, e)
+    background.add_task(_runner)
+    return {"ok": True, "queued": targets,
+            "params": {"days": history_back_days,
+                       "weeklies": forward_weeklies,
+                       "strikes": strikes_around_atm}}
+
+
 @router.get("/fyers/state")
 async def fyers_state(
     target_date: str | None = Query(None, alias="date"),

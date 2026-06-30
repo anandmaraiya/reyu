@@ -75,6 +75,25 @@ async def callback(auth_code: str = Query(...), state: str | None = None):
     if not token:
         raise HTTPException(400, f"Fyers token exchange failed: {resp}")
     await fy.set_access_token(token)
+
+    # Kick off an immediate options 1-min backfill — Fyers tokens expire
+    # daily and we don't want to wait until the next 09:00 IST cron to
+    # capture fresh per-contract history. Fires async so the redirect
+    # back to the frontend doesn't block.
+    import asyncio
+    from app.data import option_history
+    async def _post_login_backfill():
+        try:
+            for u in ["NSE:NIFTY50-INDEX", "NSE:NIFTYBANK-INDEX", "NSE:FINNIFTY-INDEX"]:
+                await option_history.backfill_underlying(
+                    u, history_back_days=100,
+                    forward_weeklies=2, strikes_around_atm=15,
+                    polite_delay_sec=0.3,
+                )
+        except Exception:
+            pass            # never let a backfill failure interrupt OAuth
+    asyncio.create_task(_post_login_backfill())
+
     # FRONTEND_URL may be set in .env for VM deployments (e.g. http://35.202.153.147).
     # Falls back to "/" which works for same-origin nginx deployments.
     frontend_url = os.environ.get("FRONTEND_URL", "")
