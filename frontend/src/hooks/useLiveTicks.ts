@@ -17,8 +17,16 @@ export type ChainMessage = {
 export type LiveStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
 const WS_URL = (() => {
-  const base = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
-  return base.replace(/^http/, 'ws') + '/ws/ticks'
+  // Prefer VITE_API_BASE when explicitly set (legacy split-origin dev).
+  // Otherwise derive from the current page origin so Caddy/nginx in front
+  // of the stack can route /ws/* same-origin — needed for HTTPS sites
+  // where the WS scheme must be wss:// to avoid mixed-content errors.
+  const base = import.meta.env.VITE_API_BASE
+  if (base) {
+    return base.replace(/^http/, 'ws') + '/ws/ticks'
+  }
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  return `${proto}://${window.location.host}/ws/ticks`
 })()
 
 const RECONNECT_BASE_MS = 1000

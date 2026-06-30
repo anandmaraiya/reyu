@@ -1,0 +1,34 @@
+# Caddy reverse proxy for the Reyu stack.
+#
+# Routes:
+#   /api/*  -> backend:8000  (FastAPI)
+#   /ws/*   -> backend:8000  (WebSocket — Caddy auto-upgrades)
+#   /       -> frontend:5173 (Vite dev server)
+#
+# Everything is same-origin from the browser's POV, so CORS is moot.
+#
+# Local / IP-only deployment:
+#   listen on :80 — visit http://<VM_IP>/
+#
+# When you have a domain, replace `:80` with `reyu.yourdomain.com` and Caddy
+# will auto-provision a Let's Encrypt cert. Don't forget to update Fyers
+# dashboard redirect_uri + .env FYERS_REDIRECT_URI / CORS_ORIGINS.
+
+:80 {
+    # Backend API
+    handle /api/* {
+        reverse_proxy backend:8000
+    }
+
+    # WebSockets — same origin, Caddy negotiates the upgrade automatically
+    handle /ws/* {
+        reverse_proxy backend:8000
+    }
+
+    # Everything else -> Vite dev server (HMR WebSocket works through this)
+    handle {
+        reverse_proxy frontend:5173
+    }
+
+    encode gzip
+}

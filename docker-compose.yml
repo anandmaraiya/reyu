@@ -1,10 +1,27 @@
 services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: reyu-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+
   backend:
     build: ./backend
     container_name: reyu-backend
     env_file: .env
-    ports:
-      - "8000:8000"
+    # No public port — Caddy proxies /api/* and /ws/* internally.
+    # Keep 8000 in expose so dev can still hit it from the host if needed.
+    expose:
+      - "8000"
     volumes:
       - ./backend/app:/app/app
       - reyu-data:/app/data
@@ -20,6 +37,8 @@ services:
       POSTGRES_USER: reyu
       POSTGRES_PASSWORD: reyu
       POSTGRES_DB: reyu
+    # Keep host-exposed for psql debugging. Remove in prod if you don't
+    # need external DB access.
     ports:
       - "5432:5432"
     volumes:
@@ -29,13 +48,16 @@ services:
   frontend:
     build: ./frontend
     container_name: reyu-frontend
-    ports:
-      - "5173:5173"
+    # No public port — Caddy serves the Vite dev server via reverse proxy.
+    expose:
+      - "5173"
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/index.html:/app/index.html
     environment:
-      - VITE_API_BASE=http://localhost:8000
+      # Empty base — axios uses relative URLs, browser sends them to the
+      # same origin (Caddy:80). Eliminates CORS entirely.
+      - VITE_API_BASE=
     depends_on:
       - backend
     restart: unless-stopped
@@ -43,6 +65,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: reyu-redis
+    # Keep host-exposed for redis-cli debugging.
     ports:
       - "6379:6379"
     volumes:
@@ -53,3 +76,5 @@ volumes:
   reyu-data:
   reyu-redis:
   reyu-pg:
+  caddy_data:
+  caddy_config:
