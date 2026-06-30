@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     portfolio_max_vega: float = 2000
     tracked_symbols: str = "NSE:NIFTY50-INDEX,NSE:NIFTYBANK-INDEX"
     snapshot_interval_sec: int = 60
+    # Comma-separated list of allowed CORS origins. Override per-deployment
+    # in .env, e.g. CORS_ORIGINS=http://34.93.12.45:5173,https://reyu.example.com
+    cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
     # Razorpay billing
     razorpay_key_id: str = ""
