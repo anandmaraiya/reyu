@@ -29,6 +29,7 @@ import './styles.css'          // Legacy component styles (kept for existing pag
 // ── Page lazy imports ────────────────────────────────────────────────────────
 // Default route
 const Chat           = lazy(() => import('./pages/Chat'))
+const DataAdmin      = lazy(() => import('./pages/DataAdmin'))
 // Core
 const Dashboard      = lazy(() => import('./pages/Dashboard'))
 const Positions      = lazy(() => import('./pages/Positions'))
@@ -119,6 +120,7 @@ function AppShell() {
                 <Route path="/brokers"    element={<Brokers />} />
                 <Route path="/subscribe"  element={<Subscription />} />
                 <Route path="/settings"   element={<Settings theme={theme} setTheme={setTheme} />} />
+                <Route path="/admin/data" element={<DataAdmin />} />
 
                 {/* RL dashboard */}
                 <Route path="/rl"         element={<RL />} />

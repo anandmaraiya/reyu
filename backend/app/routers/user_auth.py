@@ -114,6 +114,20 @@ async def require_user(
     return user
 
 
+# Superadmin = the singular operator account that can run pipeline
+# diagnostics + see the dataset-fills dashboard. Hardcoded by email
+# rather than a DB flag so it survives DB resets and is obvious in code.
+SUPERADMIN_EMAILS = {"algo@reyu.ai"}
+
+
+async def require_superadmin(user: dict = Depends(require_user)) -> dict:
+    """Gate for operator-only endpoints (pipeline diagnostics, daily-
+    fills dashboard, scheduled-job triggers)."""
+    if user.get("email") not in SUPERADMIN_EMAILS:
+        raise HTTPException(403, "Superadmin only")
+    return user
+
+
 def require_tier(*tiers: str):
     """Dependency factory: raise 403 if user's tier is not in the allowed set.
     For paid tiers (pro/algo), also verifies the subscription is active in the DB."""

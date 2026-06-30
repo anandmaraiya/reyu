@@ -51,6 +51,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'subscribe', label: 'Subscription',  icon: <SubIcon />,       path: '/subscribe', group: 'Account' },
   { id: 'settings',  label: 'Settings',      icon: <SettingsIcon />,  path: '/settings',  group: 'Account' },
   { id: 'rl',        label: 'RL Engine',     icon: <RLIcon />,        path: '/rl',        group: 'Account', badge: 'LIVE' },
+  // Superadmin only — Sidebar filters this for non-superadmins.
+  { id: 'data-admin',label: 'Data Capture',  icon: <SettingsIcon />,  path: '/admin/data', group: 'Admin', badge: 'ADMIN' },
 ]
 
 export function Sidebar() {
@@ -66,7 +68,10 @@ export function Sidebar() {
   }, [collapsed])
 
   // Group items
-  const groups = ['', 'My Strategies', 'Watchlist', 'Account']
+  const groups = ['', 'My Strategies', 'Watchlist', 'Account', 'Admin']
+
+  // Superadmin-only nav items (filtered out for all other users)
+  const isSuperadmin = user?.email === 'algo@reyu.ai'
 
   function handleNav(item: NavItem) {
     // Protected paths prompt login if anonymous
@@ -97,6 +102,8 @@ export function Sidebar() {
       <nav className="sidebar-nav" role="navigation" aria-label="Main navigation">
         {groups.map(group => {
           const items = NAV_ITEMS.filter(i => (i.group ?? '') === group)
+            // Hide superadmin items unless the logged-in user IS the superadmin.
+            .filter(i => i.id !== 'data-admin' || isSuperadmin)
           if (!items.length) return null
           return (
             <div key={group || '__root'} className="sidebar-group">
