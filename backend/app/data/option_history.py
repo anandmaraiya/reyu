@@ -219,7 +219,23 @@ async def backfill_underlying(
 ) -> dict:
     """Pull 1-min history for every contract in the ATM band over the
     target window. Returns counts. UPSERT-idempotent so re-running just
-    fills gaps."""
+    fills gaps.
+
+    SAFEGUARD: when Fyers is unauthed, fy.history returns mock data with
+    fake premiums (often the underlying spot). Persisting that pollutes
+    every downstream RL/backtest consumer. Skip the entire backfill in
+    demo mode — same pattern used by `_save_snapshot`.
+    """
+    if await fy.is_demo():
+        log.warning("option-history backfill skipped — Fyers in demo mode")
+        return {
+            "underlying": underlying,
+            "skipped": "demo_mode",
+            "candles_inserted": 0,
+            "contracts_requested": 0,
+            "window": None,
+        }
+
     symbols, today = await enumerate_symbols(
         underlying,
         history_back_days=history_back_days,

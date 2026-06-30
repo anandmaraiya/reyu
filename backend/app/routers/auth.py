@@ -9,6 +9,7 @@ Headless / VM mode:
                                    (for Linux servers where no browser is available)
 """
 import os
+import secrets
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from fastapi.concurrency import run_in_threadpool
@@ -28,24 +29,40 @@ class SetTokenRequest(BaseModel):
     secret: str = ""
 
 
-def _session() -> fyersModel.SessionModel:
-    return fyersModel.SessionModel(
+def _session(state: str | None = None) -> fyersModel.SessionModel:
+    s = fyersModel.SessionModel(
         client_id=settings.fyers_app_id,
         secret_key=settings.fyers_secret_key,
         redirect_uri=settings.fyers_redirect_uri,
         response_type="code",
         grant_type="authorization_code",
     )
+    if state:
+        # Set state on the SDK instance — without it, the SDK appends
+        # `state=None` (Python literal) and Fyers' Cloudflare WAF returns
+        # 403 Forbidden on the resulting URL.
+        try:
+            s.state = state
+        except Exception:
+            pass
+    return s
 
 
 @router.get("/login")
 async def login():
-    url = _session().generate_authcode()
-    # The Fyers SDK appends `state=None` (Python literal) when no state was
-    # provided — strip it before handing the URL to the browser so the OAuth
-    # round-trip stays clean.
+    # Generate a CSRF-style state token. Without a real state value the
+    # Fyers SDK injects literal "None" into the URL → Cloudflare flags as
+    # bot traffic and returns 403, which manifests in the UI as the
+    # "re-authenticate" button silently doing nothing.
+    state = secrets.token_urlsafe(16)
+    url = _session(state=state).generate_authcode()
+    # Belt-and-suspenders: if the SDK still rendered "state=None", replace
+    # with the real token instead of stripping (so the param IS present).
     if url and "state=None" in url:
-        url = url.replace("&state=None", "").replace("?state=None&", "?").replace("?state=None", "")
+        url = url.replace("state=None", f"state={state}")
+    elif url and "state=" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}state={state}"
     return {"login_url": url}
 
 
