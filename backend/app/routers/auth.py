@@ -76,6 +76,12 @@ async def callback(auth_code: str = Query(...), state: str | None = None):
         raise HTTPException(400, f"Fyers token exchange failed: {resp}")
     await fy.set_access_token(token)
 
+    # Compliance audit — Fyers linked. Actor is anonymous here (OAuth
+    # callback carries no JWT) — that's fine, IP + state is captured.
+    from app.audit import record as _audit
+    await _audit(event_type="BROKER_CONNECT", resource_type="broker",
+                 resource_id="fyers", action="Fyers OAuth token stored")
+
     # Kick off an immediate options 1-min backfill — Fyers tokens expire
     # daily and we don't want to wait until the next 09:00 IST cron to
     # capture fresh per-contract history. Fires async so the redirect

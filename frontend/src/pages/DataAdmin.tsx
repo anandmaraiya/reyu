@@ -44,6 +44,14 @@ type JobRunResult = {
   ended_at: string
 }
 
+type AuditEntry = {
+  id: string; ts: string
+  actor_id: string | null; actor_email: string | null
+  event_type: string; resource_type: string | null; resource_id: string | null
+  action: string | null; ip_address: string | null; user_agent: string
+}
+type AuditLog = { days: number; total: number; entries: AuditEntry[] }
+
 type RegimeRouterTrades = {
   days: number
   trades: Array<{
@@ -291,6 +299,26 @@ export default function DataAdmin() {
     refetchInterval: 30_000,
   })
 
+  const auditLog = useQuery<AuditLog>({
+    queryKey: ['audit-log'],
+    queryFn: async () => (await api.get('/api/audit/log?days=30&limit=50')).data,
+    refetchInterval: 30_000,
+  })
+
+  const exportAudit = () => {
+    const token = localStorage.getItem('reyu_access_token') || ''
+    fetch('/api/audit/export.csv?days=365', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.blob())
+      .then(blob => {
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `reyu-audit-${new Date().toISOString().slice(0, 10)}.csv`
+        a.click()
+        URL.revokeObjectURL(url)
+      })
+  }
+
   const runRR = useMutation({
     mutationFn: async (job: 'morning' | 'close') => {
       const { data } = await api.post(`/api/admin/data/regime-router/run-now?job=${job}`)
@@ -344,7 +372,7 @@ export default function DataAdmin() {
         {fills.data && (
           <>
             <div style={{
-              display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
               gap: 14, marginBottom: 16,
             }}>
               {TABLES.map((t) => {
@@ -455,7 +483,7 @@ export default function DataAdmin() {
         </div>
         {rrTrades.data && (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 12 }}>
               <div style={S.statTile}>
                 <div style={S.statLabel}>Total</div>
                 <div style={S.statValue}>{rrTrades.data.summary.total}</div>
@@ -539,6 +567,55 @@ export default function DataAdmin() {
               </table>
             )}
           </>
+        )}
+      </div>
+
+      {/* ── AUDIT TRAIL (F-A9) ────────────────────────────────────── */}
+      <div style={S.card}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+          <h3 style={{ ...S.cardTitle, margin: 0, flex: 1 }}>Audit Trail</h3>
+          {auditLog.data && (
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginRight: 12 }}>
+              {auditLog.data.total} events · last 30d
+            </span>
+          )}
+          <button style={S.button} onClick={exportAudit}>Export CSV (1y)</button>
+        </div>
+        {auditLog.data && auditLog.data.entries.length === 0 ? (
+          <div style={{ color: 'var(--text-secondary)', padding: 12 }}>
+            No audit events yet. Money-path actions (login, order exit, broker connect) auto-record here.
+          </div>
+        ) : auditLog.data && (
+          <table style={S.table}>
+            <thead><tr>
+              <th style={S.th}>time</th>
+              <th style={S.th}>event</th>
+              <th style={S.th}>actor</th>
+              <th style={S.th}>action</th>
+              <th style={S.th}>ip</th>
+            </tr></thead>
+            <tbody>
+              {auditLog.data.entries.slice(0, 30).map(e => {
+                const isFail = e.event_type.includes('FAILED') || e.event_type.includes('DISCONNECT')
+                return (
+                  <tr key={e.id}>
+                    <td style={{ ...S.td, whiteSpace: 'nowrap', color: 'var(--text-secondary)', fontSize: 11 }}>
+                      {new Date(e.ts).toLocaleString()}
+                    </td>
+                    <td style={{
+                      ...S.td, fontWeight: 600,
+                      color: isFail ? 'var(--danger)' : 'var(--text-primary)',
+                    }}>{e.event_type}</td>
+                    <td style={{ ...S.td, fontSize: 11 }}>{e.actor_email || '—'}</td>
+                    <td style={{ ...S.td, fontSize: 12 }}>{e.action || '—'}</td>
+                    <td style={{ ...S.td, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                      {e.ip_address || '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         )}
       </div>
 

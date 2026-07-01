@@ -326,7 +326,7 @@ export default function Onboarding() {
                 then closes strictly at 15:20 IST. Backtest on 6 years (2019–2024):
               </p>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 20 }}>
                 <div style={S.statTile}>
                   <div style={S.statLabel}>ROI</div>
                   <div style={{ ...S.statValue, color: 'var(--brand-primary)' }}>+975%</div>

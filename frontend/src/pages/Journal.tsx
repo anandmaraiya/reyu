@@ -75,7 +75,7 @@ const S = {
   cardTitle: { margin: '0 0 12px 0', fontSize: 14, fontWeight: 600 } as CSSProperties,
   kpiGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(6, 1fr)',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
     gap: 12,
     marginBottom: 24,
   } as CSSProperties,

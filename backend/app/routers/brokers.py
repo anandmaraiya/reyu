@@ -82,6 +82,13 @@ async def disconnect(broker_id: str, request: Request):
     if not user:
         raise HTTPException(401, "Not authenticated")
     await disconnect_broker(user["sub"], broker_id)
+
+    from app.audit import record as _audit
+    await _audit(event_type="BROKER_DISCONNECT",
+                 actor_id=user.get("sub"), actor_email=user.get("email"),
+                 resource_type="broker", resource_id=broker_id,
+                 action=f"Disconnected {broker_id}",
+                 request=request)
     return {"status": "disconnected", "broker_id": broker_id}
 
 

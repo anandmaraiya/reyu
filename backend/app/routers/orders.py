@@ -313,4 +313,17 @@ async def exit_positions(req: ExitRequest, user: dict = Depends(_require_live_ti
     ok = all("error" not in p for p in placed)
     await _n.emit("EXIT_POSITIONS",
                   f"{len(candidates)} legs · {'DRY' if req.dry_run else 'LIVE'} · {'OK' if ok else 'PARTIAL'}")
+
+    # Compliance audit — LIVE exits always logged; DRY still recorded
+    # so we can see what someone validated even if it never fired.
+    from app.audit import record as _audit
+    await _audit(
+        event_type="ORDER_EXIT_LIVE" if not req.dry_run else "ORDER_EXIT_DRY",
+        actor_id=user.get("sub"),
+        actor_email=user.get("email"),
+        resource_type="order",
+        resource_id=None,
+        action=f"{len(candidates)} legs · {'DRY' if req.dry_run else 'LIVE'} · {'OK' if ok else 'PARTIAL'}",
+        meta={"legs": [c[0] for c in candidates], "ok": ok},
+    )
     return {"ok": ok, "matched": len(candidates), "results": placed}

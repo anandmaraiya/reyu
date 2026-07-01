@@ -59,6 +59,32 @@ class RegimeRouterPaperTrade(Base):
     exit_ts = Column(DateTime)
 
 
+class AuditLog(Base):
+    """Append-only audit trail (F-A9).
+
+    Records money-path + auth events for compliance. Rows are NEVER
+    updated or deleted by application code — the routers do INSERT only.
+    Retention 7 years (managed by ops policy, not enforced in-app).
+
+    Consumed by:
+      - /api/audit/log       superadmin browse
+      - /api/audit/export.csv regulator export
+      - Optional per-user "my activity" view (future)
+    """
+    __tablename__ = "audit_log"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    ts = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    actor_id = Column(String, nullable=True, index=True)          # user_id, or NULL for system events
+    actor_email = Column(String, nullable=True)                   # captured at write for readability
+    event_type = Column(String, nullable=False, index=True)       # LOGIN | REGISTER | ORDER_EXIT | BROKER_CONNECT | STRATEGY_PROMOTE | ...
+    resource_type = Column(String, nullable=True)                 # strategy | order | broker | user | subscription
+    resource_id = Column(String, nullable=True, index=True)
+    action = Column(String, nullable=True)                        # human-readable summary
+    meta = Column(String, nullable=True)                          # JSON blob w/ event-specific detail
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+
+
 class Instrument(Base):
     __tablename__ = "instruments"
     symbol = Column(String, primary_key=True)        # e.g. NSE:RELIANCE-EQ
@@ -336,6 +362,11 @@ class Strategy(Base):
     tags = Column(String, default="[]")               # JSON list
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # F-A6 publish + copy-trade
+    is_published = Column(Boolean, default=False)
+    published_at = Column(DateTime, nullable=True)
+    copies_count = Column(Integer, default=0)
+    copied_from_id = Column(String, nullable=True)      # source strategy_id if this was copied
 
 
 class StrategyRun(Base):
@@ -798,6 +829,31 @@ async def init_db() -> None:
             # Onboarding columns — safe additive migration
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMP",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS trader_type VARCHAR",
+            # F-A6 publish + copy-trade
+            "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS is_published BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS published_at TIMESTAMP",
+            "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS copies_count INTEGER DEFAULT 0",
+            "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS copied_from_id VARCHAR",
+            "CREATE INDEX IF NOT EXISTS ix_strategies_published ON strategies (is_published, published_at DESC) WHERE is_published = TRUE",
+            # Audit log — 7-year append-only compliance trail
+            """
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id VARCHAR PRIMARY KEY,
+                ts TIMESTAMP NOT NULL DEFAULT NOW(),
+                actor_id VARCHAR,
+                actor_email VARCHAR,
+                event_type VARCHAR NOT NULL,
+                resource_type VARCHAR,
+                resource_id VARCHAR,
+                action VARCHAR,
+                meta TEXT,
+                ip_address VARCHAR,
+                user_agent VARCHAR
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_audit_ts ON audit_log (ts DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_audit_actor ON audit_log (actor_id, ts DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_audit_event ON audit_log (event_type, ts DESC)",
             """
             CREATE TABLE IF NOT EXISTS option_intraday (
                 ts TIMESTAMP NOT NULL,

@@ -209,7 +209,12 @@ async def _execute_run_inner(run_id: str) -> None:
                     "gross_pnl_inr": round(
                         (t.exit_prem - t.entry_prem) * lot_size * t.qty_lots, 2
                     ),
-                    "net_pnl_inr": None,
+                    # Net = gross - all-in fees (brokerage + slippage + STT + exchange + GST).
+                    # `roi.fees_inr_per_trade` is the summed friction from compute_roi().
+                    "net_pnl_inr": round(
+                        (t.exit_prem - t.entry_prem) * lot_size * t.qty_lots
+                        - (roi.get("fees_inr_per_trade") or 0), 2
+                    ),
                     "pnl_pct": round(t.pnl_pct, 3),
                     "mae_pct": t.mae_pct,
                     "mfe_pct": t.mfe_pct,

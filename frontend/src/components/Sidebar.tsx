@@ -42,6 +42,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'chain',     label: 'Option Chain',  icon: <ChainIcon />,     path: '/chain' },
   { id: 'positions', label: 'Positions',     icon: <PositionsIcon />, path: '/positions' },
   { id: 'journal',   label: 'Journal',       icon: <PortfolioIcon />, path: '/journal' },
+  { id: 'catalog',   label: 'Catalog',       icon: <ChainIcon />,     path: '/catalog',   group: 'My Strategies' },
   { id: 'strategies',label: 'Saved',         icon: <SavedIcon />,     path: '/strategies',group: 'My Strategies' },
   { id: 'backtest',  label: 'Backtest',      icon: <BacktestIcon />,  path: '/backtest',  group: 'My Strategies' },
   { id: 'compare',   label: 'Compare',       icon: <CompareIcon />,   path: '/compare',   group: 'My Strategies' },
@@ -56,7 +57,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'data-admin',label: 'Data Capture',  icon: <SettingsIcon />,  path: '/admin/data', group: 'Admin', badge: 'ADMIN' },
 ]
 
-export function Sidebar() {
+export function Sidebar({ mobileOpen, onMobileClose }: { mobileOpen?: boolean; onMobileClose?: () => void } = {}) {
   const location  = useLocation()
   const navigate  = useNavigate()
   const { user, tier, trialDaysLeft, logout, openGate } = useAuth()
@@ -87,8 +88,14 @@ export function Sidebar() {
   const isActive = (path: string) =>
     path === '/' ? location.pathname === '/' : location.pathname.startsWith(path)
 
+  // Close mobile drawer whenever user navigates to a new path
+  useEffect(() => {
+    if (mobileOpen && onMobileClose) onMobileClose()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname])
+
   return (
-    <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : 'sidebar-expanded'}`}>
+    <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : 'sidebar-expanded'} ${mobileOpen ? 'sidebar-mobile-open' : ''}`}>
       {/* Toggle button */}
       <button
         className="sidebar-toggle"

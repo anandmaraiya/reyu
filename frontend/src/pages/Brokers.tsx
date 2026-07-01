@@ -8,6 +8,8 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth, api } from '../context/AuthContext'
+import ConfirmDangerModal from '../components/ConfirmDangerModal'
+import { track, Events } from '../telemetry'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -192,6 +194,9 @@ export default function Brokers() {
   const [connectedMap, setConnectedMap] = useState<Record<string, ConnectedBroker>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // Typed-symbol confirmation for disconnect — prevents accidental
+  // broker unlinks that would immediately halt live paper runs.
+  const [disconnectTarget, setDisconnectTarget] = useState<{ id: string; name: string } | null>(null)
   const [busyBroker, setBusyBroker] = useState<string | null>(null)
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null)
 
@@ -251,13 +256,22 @@ export default function Brokers() {
 
   // ── Disconnect ────────────────────────────────────────────────────────────
 
-  async function handleDisconnect(brokerId: string) {
+  // Step 1: open the typed-confirmation modal. Step 2 (below in
+  // render) submits when user types the broker name correctly.
+  function handleDisconnect(brokerId: string) {
     const broker = catalog.find(b => b.id === brokerId)
-    if (!confirm(`Disconnect ${broker?.name ?? brokerId}? Live data and orders will stop.`)) return
-    setBusyBroker(brokerId)
+    setDisconnectTarget({ id: brokerId, name: broker?.name ?? brokerId })
+  }
+
+  async function doDisconnect() {
+    if (!disconnectTarget) return
+    const { id, name } = disconnectTarget
+    setBusyBroker(id)
+    setDisconnectTarget(null)
     try {
-      await api.delete(`/api/brokers/${brokerId}`)
-      pushToast('ok', `${broker?.name ?? brokerId} disconnected.`)
+      await api.delete(`/api/brokers/${id}`)
+      track(Events.BrokerDisconnected, { broker: name })
+      pushToast('ok', `${name} disconnected.`)
       await loadData()
     } catch (e: any) {
       pushToast('err', e?.response?.data?.detail || 'Disconnect failed.')
@@ -524,6 +538,23 @@ export default function Brokers() {
           .brokers-how-steps { grid-template-columns: 1fr; }
         }
       `}</style>
+
+      {/* Typed-symbol confirmation before an actual disconnect fires.
+          Prevents accidental unlinks that would halt live paper runs. */}
+      <ConfirmDangerModal
+        open={!!disconnectTarget}
+        title={`Disconnect ${disconnectTarget?.name ?? 'broker'}`}
+        description={
+          `Disconnecting ${disconnectTarget?.name ?? 'this broker'} immediately halts live data ` +
+          `and stops any active paper-live or LIVE strategies from opening new trades. ` +
+          `Open positions remain but you'll lose real-time P&L until you reconnect.`
+        }
+        expectedText={disconnectTarget?.name ?? ''}
+        confirmLabel="Disconnect"
+        variant="danger"
+        onConfirm={doDisconnect}
+        onCancel={() => setDisconnectTarget(null)}
+      />
     </div>
   )
 }

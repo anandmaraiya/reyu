@@ -34,6 +34,7 @@ const DataAdmin      = lazy(() => import('./pages/DataAdmin'))
 const ResetPassword  = lazy(() => import('./pages/ResetPassword'))
 const Onboarding     = lazy(() => import('./pages/Onboarding'))
 const Journal        = lazy(() => import('./pages/Journal'))
+const Catalog        = lazy(() => import('./pages/Catalog'))
 // Core
 const Dashboard      = lazy(() => import('./pages/Dashboard'))
 const Positions      = lazy(() => import('./pages/Positions'))
@@ -83,14 +84,34 @@ function AppShell() {
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+
   return (
     <div className="app-shell" data-theme={theme}>
+      {/* Mobile hamburger — floats top-left, only shown on mobile via CSS */}
+      <button
+        className="mobile-menu-btn"
+        onClick={() => setMobileNavOpen(true)}
+        aria-label="Open navigation"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <line x1="3" y1="6"  x2="21" y2="6" />
+          <line x1="3" y1="12" x2="21" y2="12" />
+          <line x1="3" y1="18" x2="21" y2="18" />
+        </svg>
+      </button>
+
       {/* Top market ribbon — always visible */}
       <MarketRibbon />
 
       <div className="app-body">
-        {/* Collapsible sidebar */}
-        <Sidebar />
+        {/* Mobile backdrop (closes drawer on tap) */}
+        <div
+          className={`sidebar-backdrop ${mobileNavOpen ? 'open' : ''}`}
+          onClick={() => setMobileNavOpen(false)}
+        />
+        {/* Collapsible sidebar — becomes drawer on mobile */}
+        <Sidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
 
         {/* Main page content */}
         <main className="app-main">
@@ -128,6 +149,7 @@ function AppShell() {
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/journal"    element={<Journal />} />
+                <Route path="/catalog"    element={<Catalog />} />
 
                 {/* RL dashboard */}
                 <Route path="/rl"         element={<RL />} />
@@ -162,15 +184,16 @@ function AppShell() {
 }
 
 /**
- * Redirects logged-in users to /onboarding when onboarded_at is null.
+ * Redirects logged-in users to /onboarding ONCE per session on first
+ * post-login navigation. After that, users can freely go anywhere —
+ * onboarding is a nudge, not a wall.
  *
- * Runs once per navigation change; skips if already on /onboarding, a
- * public route (/, /reset-password), or if user is anonymous.
- *
- * Intentionally non-blocking — it doesn't wrap Routes because we don't
- * want to force the onboarding flow on people who navigate manually or
- * who are re-visiting pages. It just fires a redirect once per session.
+ * Session flag: sessionStorage 'reyu_onboard_redirected' — cleared
+ * automatically when the tab closes. On logout we don't clear it, so a
+ * re-login in the same tab respects the user's "I'll do it later" choice.
  */
+const REDIRECTED_FLAG = 'reyu_onboard_redirected'
+
 function OnboardingGate() {
   const { user } = useAuth()
   const location = useLocation()
@@ -179,11 +202,15 @@ function OnboardingGate() {
   useEffect(() => {
     if (!user) return
     if (user.onboarded_at) return
-    // Never interrupt these routes
+    // Only fire once per session — never nag on subsequent navigations
+    if (sessionStorage.getItem(REDIRECTED_FLAG) === '1') return
+    // Never interrupt these routes even on the first hit
     const skip = ['/onboarding', '/reset-password']
     if (skip.some(p => location.pathname.startsWith(p))) return
-    // Skip anonymous-friendly landing so users can browse
+    // Anonymous-friendly landing — let users browse without gate
     if (location.pathname === '/') return
+
+    sessionStorage.setItem(REDIRECTED_FLAG, '1')
     nav('/onboarding', { replace: true })
   }, [user, location.pathname, nav])
 

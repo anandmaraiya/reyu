@@ -3,6 +3,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import PayoffChart from '../components/PayoffChart'
 import ConfirmDialog from '../components/ConfirmDialog'
+import ConfirmDangerModal from '../components/ConfirmDangerModal'
+import PreflightPanel, { type PreflightResult } from '../components/PreflightPanel'
+import { track, Events } from '../telemetry'
 import { downloadCSV } from '../utils/csv'
 import { useToast } from '../toast'
 import { useLiveTicks } from '../hooks/useLiveTicks'
@@ -20,6 +23,15 @@ export default function Positions() {
   const [exitTarget, setExitTarget] = useState<ExitTarget | null>(null)
   const [exitDry, setExitDry] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  // Second-level gate: for LIVE exits, require the user to type an
+  // identifier (symbol or "FLATTEN-ALL") to confirm. Prevents muscle
+  // memory from firing real-money orders.
+  const [liveConfirm, setLiveConfirm] = useState<ExitTarget | null>(null)
+  // Preflight state — fetched when liveConfirm opens, drives the panel
+  // + gates the Send LIVE exit button. If verdict is FAIL, user cannot
+  // proceed even if they type the symbol correctly.
+  const [preflight, setPreflight] = useState<PreflightResult | null>(null)
+  const [preflightLoading, setPreflightLoading] = useState(false)
    const [livePrices, setLivePrices] = useState<Record<string, number>>({})
 
   const { data, isFetching, refetch, error } = useQuery({
@@ -81,25 +93,86 @@ export default function Positions() {
     return `close ${exitTarget.symbol}`
   })()
 
-  const submitExit = async () => {
-    if (!exitTarget) return
+  const submitExit = async (target: ExitTarget, dry: boolean) => {
     setSubmitting(true)
     try {
-      const body: any = { dry_run: exitDry }
-      if (exitTarget.kind === 'all') body.all = true
-      if (exitTarget.kind === 'group') body.underlyings = [exitTarget.underlying]
-      if (exitTarget.kind === 'leg') body.symbols = [exitTarget.symbol]
+      const body: any = { dry_run: dry }
+      if (target.kind === 'all') body.all = true
+      if (target.kind === 'group') body.underlyings = [target.underlying]
+      if (target.kind === 'leg') body.symbols = [target.symbol]
       const r = await api.post('/api/orders/exit', body)
+      track(Events.PositionExited, {
+        mode: dry ? 'dry' : 'live',
+        target_kind: target.kind,
+        matched: r.data.matched,
+      })
       t.push(r.data.ok ? 'success' : 'error',
-             `Exit ${exitDry ? '(dry)' : '(live)'} — ${r.data.matched} legs, ${r.data.ok ? 'ok' : 'partial'}`)
+             `Exit ${dry ? '(dry)' : '(live)'} — ${r.data.matched} legs, ${r.data.ok ? 'ok' : 'partial'}`)
       qc.invalidateQueries({ queryKey: ['pos-by-ticker'] })
     } catch (e: any) {
       t.push('error', e.response?.data?.detail || e.message)
     } finally {
       setSubmitting(false)
       setExitTarget(null)
+      setLiveConfirm(null)
     }
   }
+
+  const handleConfirm = () => {
+    if (!exitTarget) return
+    if (exitDry) {
+      submitExit(exitTarget, true)
+    } else {
+      // LIVE — pop the typed-symbol gate + fire preflight against Fyers
+      setLiveConfirm(exitTarget)
+      setExitTarget(null)
+      runPreflight(exitTarget)
+    }
+  }
+
+  // Fetch preflight results when LIVE gate opens. Uses stub leg data —
+  // real preflight for multi-leg / flatten-all needs backend to enumerate
+  // open legs (task tracked separately).
+  const runPreflight = async (target: ExitTarget) => {
+    setPreflight(null)
+    setPreflightLoading(true)
+    try {
+      // For MVP we send a single representative leg (SELL/BUY based on
+      // context) — backend validates auth + funds regardless of leg count,
+      // which is what we need pre-flight to catch anyway.
+      const stubSymbol = target.kind === 'leg' ? target.symbol : 'NSE:NIFTY26JUL24800CE'
+      const { data } = await api.post('/api/orders/preflight', {
+        legs: [{
+          symbol: stubSymbol,
+          side: 'SELL',       // exit direction (position was open, we close it)
+          qty: 1,
+          price: 100,
+          order_type: 'MARKET',
+          product_type: 'INTRADAY',
+        }],
+      })
+      setPreflight(data)
+    } catch (e: any) {
+      setPreflight({
+        verdict: 'FAIL',
+        checks: [{
+          check: 'preflight_error',
+          status: 'FAIL',
+          detail: e?.response?.data?.detail || 'Preflight failed. Retry or contact support.',
+        }],
+        summary: { legs: 0, contracts_total: 0, margin_estimate_inr: 0, funds_available_inr: 0, checked_at: new Date().toISOString() },
+      })
+    } finally {
+      setPreflightLoading(false)
+    }
+  }
+
+  // What must the user type to confirm the LIVE exit?
+  const liveExpectedText =
+    liveConfirm?.kind === 'all' ? 'FLATTEN-ALL'
+    : liveConfirm?.kind === 'group' ? liveConfirm.underlying
+    : liveConfirm?.kind === 'leg' ? liveConfirm.symbol
+    : ''
 
   return (
     <div className="page-shell">
@@ -217,17 +290,39 @@ export default function Positions() {
             ? 'Dry-run: validates only — no orders are sent.'
             : 'LIVE: market orders will be placed on Fyers.')
         }
-        confirmLabel={exitDry ? 'Validate exit' : 'Send LIVE exit'}
+        confirmLabel={exitDry ? 'Validate exit' : 'Continue to LIVE gate →'}
         cancelLabel="Cancel"
         loading={submitting}
-        onConfirm={submitExit}
+        onConfirm={handleConfirm}
         onCancel={() => setExitTarget(null)}
       >
         <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
           <input type="checkbox" checked={exitDry} onChange={e => setExitDry(e.target.checked)} />
-          Dry run (validate only)
+          Dry run (validate only — no real orders)
         </label>
       </ConfirmDialog>
+
+      {/* Second-level LIVE confirmation — typed-symbol gate.
+          Only shown after user unchecks dry-run and clicks Continue. */}
+      <ConfirmDangerModal
+        open={!!liveConfirm}
+        title="Confirm LIVE exit"
+        description={
+          liveConfirm?.kind === 'all'
+            ? `You're about to send market orders that will FLATTEN ALL open positions across every ticker. This is irreversible once fills come back from the broker.`
+            : liveConfirm?.kind === 'group'
+            ? `You're about to send market orders that will close every leg in ${liveConfirm.underlying}. This is irreversible once fills come back from the broker.`
+            : `You're about to send a market order that will close ${liveConfirm?.kind === 'leg' ? liveConfirm.symbol : ''}. This is irreversible once the fill comes back from the broker.`
+        }
+        expectedText={liveExpectedText}
+        confirmLabel={submitting ? 'Sending…' : 'Send LIVE exit'}
+        variant="danger"
+        extraGate={preflight?.verdict !== 'FAIL'}
+        onConfirm={() => liveConfirm && submitExit(liveConfirm, false)}
+        onCancel={() => { setLiveConfirm(null); setPreflight(null) }}
+      >
+        <PreflightPanel result={preflight} loading={preflightLoading} />
+      </ConfirmDangerModal>
     </div>
   )
 }

@@ -264,6 +264,12 @@ async def register(req: RegisterRequest):
     except Exception:
         pass
 
+    # Audit — REGISTER event
+    from app.audit import record as _audit
+    await _audit(event_type="REGISTER", actor_id=user.id, actor_email=user.email,
+                 resource_type="user", resource_id=user.id,
+                 action=f"Account created (tier={user.tier})")
+
     return TokenResponse(
         access_token=access,
         refresh_token=refresh,
@@ -280,11 +286,16 @@ async def register(req: RegisterRequest):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request):
     async with SessionLocal() as s:
         result = await s.execute(select(User).where(User.email == req.email, User.is_active == True))
         user = result.scalar_one_or_none()
         if not user or not pwd_context.verify(req.password, user.password_hash):
+            from app.audit import record as _audit
+            await _audit(event_type="LOGIN_FAILED",
+                         actor_email=req.email,
+                         action=f"Bad password or unknown email",
+                         request=request)
             raise HTTPException(401, "Invalid email or password")
 
         access = create_access_token(user)
@@ -292,6 +303,12 @@ async def login(req: LoginRequest):
 
         from app.store import store as st
         await st.r.set(f"refresh:{user.id}", refresh, ex=REFRESH_EXPIRE_DAYS * 86400)
+
+        from app.audit import record as _audit
+        await _audit(event_type="LOGIN", actor_id=user.id, actor_email=user.email,
+                     resource_type="user", resource_id=user.id,
+                     action=f"Login ok (tier={user.tier})",
+                     request=request)
 
     return TokenResponse(
         access_token=access,
@@ -384,6 +401,12 @@ async def mark_onboarded(
             u.onboarded_at = datetime.utcnow()
         u.trader_type = req.trader_type
         await s.commit()
+
+    from app.audit import record as _audit
+    await _audit(event_type="ONBOARDED", actor_id=u.id, actor_email=u.email,
+                 resource_type="user", resource_id=u.id,
+                 action=f"Completed onboarding as {u.trader_type}")
+
     return {"ok": True, "onboarded_at": u.onboarded_at.isoformat(), "trader_type": u.trader_type}
 
 
@@ -471,6 +494,12 @@ async def reset_password(req: ResetPasswordRequest):
     # Single-use: burn the token, invalidate any active refresh sessions
     await st.r.delete(RESET_TOKEN_KEY.format(token=req.token))
     await st.r.delete(f"refresh:{user_id}")
+
+    from app.audit import record as _audit
+    await _audit(event_type="PASSWORD_RESET", actor_id=user_id, actor_email=u.email,
+                 resource_type="user", resource_id=user_id,
+                 action="Password reset via email token")
+
     return {"ok": True, "message": "Password updated. Please log in with your new password."}
 
 

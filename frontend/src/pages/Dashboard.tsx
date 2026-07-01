@@ -11,6 +11,7 @@ import OrderModal from '../components/OrderModal'
 import IVSmile from '../components/IVSmile'
 import KeyLevelsStrip from '../components/KeyLevelsStrip'
 import RecommendationPanel from '../components/RecommendationPanel'
+import ChartsIntelligenceBar from '../components/ChartsIntelligenceBar'
 import FilterBar from '../components/FilterBar'
 import OITimeSeries from '../components/OITimeSeries'
 import OIBuildup from '../components/OIBuildup'
@@ -215,6 +216,16 @@ export default function Dashboard() {
           )}
         />
       </div>
+
+      {/* CPO Intelligence Bar — always at top, explains → suggests → acts */}
+      <ChartsIntelligenceBar
+        chain={liveChainData}
+        spot={liveChainData?.ltp}
+        prevClose={liveChainData?.strikes?.[0] ? undefined : undefined}   // TODO: hook up prev close from tick_1m
+        loading={!liveChainData}
+        onAskReyu={(q) => navigate(`/?q=${encodeURIComponent(q)}`)}
+        onBuildStrategy={() => navigate(`/strategy?underlying=${encodeURIComponent(symbol)}`)}
+      />
 
       <div className="grid-3">
         <div className="col">
