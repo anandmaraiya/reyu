@@ -241,6 +241,14 @@ class User(Base):
     strategy_count = Column(Integer, default=0)            # saved strategies (free: max 10)
     backtest_count = Column(Integer, default=0)            # lifetime runs (free: max 50)
 
+    # Onboarding — timestamp when user completed the first-run flow.
+    # NULL means show /onboarding on next login. Set by
+    # POST /api/user/mark-onboarded when the last step completes.
+    onboarded_at = Column(DateTime, nullable=True)
+    # trader_type is user's answer to Step 1: RETAIL | HNI. Drives
+    # tier defaults + UI hints throughout the app.
+    trader_type = Column(String, nullable=True)
+
     # Subscription / billing fields
     subscription_id = Column(String, nullable=True, index=True)
     subscription_status = Column(String, nullable=True)    # active | cancelled | expired | paused
@@ -787,6 +795,9 @@ async def init_db() -> None:
             )
             """,
             "CREATE INDEX IF NOT EXISTS ix_rr_paper_date ON regime_router_paper_trade (trade_date DESC)",
+            # Onboarding columns — safe additive migration
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS trader_type VARCHAR",
             """
             CREATE TABLE IF NOT EXISTS option_intraday (
                 ts TIMESTAMP NOT NULL,

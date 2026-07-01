@@ -11,7 +11,8 @@
  * No forced login wall. / → ReyuAgent (Chat) by default.
  */
 import { useEffect, useState, lazy, Suspense } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { useAuth } from './context/AuthContext'
 
 import { AuthProvider }  from './context/AuthContext'
 import { GateModal }     from './components/GateModal'
@@ -31,6 +32,7 @@ import './styles.css'          // Legacy component styles (kept for existing pag
 const Chat           = lazy(() => import('./pages/Chat'))
 const DataAdmin      = lazy(() => import('./pages/DataAdmin'))
 const ResetPassword  = lazy(() => import('./pages/ResetPassword'))
+const Onboarding     = lazy(() => import('./pages/Onboarding'))
 // Core
 const Dashboard      = lazy(() => import('./pages/Dashboard'))
 const Positions      = lazy(() => import('./pages/Positions'))
@@ -123,6 +125,7 @@ function AppShell() {
                 <Route path="/settings"   element={<Settings theme={theme} setTheme={setTheme} />} />
                 <Route path="/admin/data" element={<DataAdmin />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
+                <Route path="/onboarding" element={<Onboarding />} />
 
                 {/* RL dashboard */}
                 <Route path="/rl"         element={<RL />} />
@@ -148,8 +151,41 @@ function AppShell() {
       {/* Global overlays */}
       <GateModal />
       <CommandPalette toggleTheme={toggleTheme} />
+
+      {/* First-run onboarding gate — redirects logged-in users with
+          onboarded_at === null to /onboarding, once per session. */}
+      <OnboardingGate />
     </div>
   )
+}
+
+/**
+ * Redirects logged-in users to /onboarding when onboarded_at is null.
+ *
+ * Runs once per navigation change; skips if already on /onboarding, a
+ * public route (/, /reset-password), or if user is anonymous.
+ *
+ * Intentionally non-blocking — it doesn't wrap Routes because we don't
+ * want to force the onboarding flow on people who navigate manually or
+ * who are re-visiting pages. It just fires a redirect once per session.
+ */
+function OnboardingGate() {
+  const { user } = useAuth()
+  const location = useLocation()
+  const nav = useNavigate()
+
+  useEffect(() => {
+    if (!user) return
+    if (user.onboarded_at) return
+    // Never interrupt these routes
+    const skip = ['/onboarding', '/reset-password']
+    if (skip.some(p => location.pathname.startsWith(p))) return
+    // Skip anonymous-friendly landing so users can browse
+    if (location.pathname === '/') return
+    nav('/onboarding', { replace: true })
+  }, [user, location.pathname, nav])
+
+  return null
 }
 
 function NotFound() {

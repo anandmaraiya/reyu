@@ -23,6 +23,8 @@ export interface AuthUser {
   trial_expires_at: string | null
   strategy_count: number
   backtest_count: number
+  onboarded_at: string | null
+  trader_type: 'RETAIL' | 'HNI' | null
 }
 
 export type GateMode = 'login' | 'signup' | 'upgrade' | 'limit' | 'trial' | null
@@ -145,6 +147,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       trial_expires_at: data.user.trial_expires_at ?? null,
       strategy_count: data.user.strategy_count ?? 0,
       backtest_count: data.user.backtest_count ?? 0,
+      onboarded_at: data.user.onboarded_at ?? null,
+      trader_type: data.user.trader_type ?? null,
     }
     localStorage.setItem('reyu_user', JSON.stringify(u))
     setUser(u)

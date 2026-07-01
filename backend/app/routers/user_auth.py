@@ -84,6 +84,12 @@ class UserProfile(BaseModel):
     display_name: str
     tier: str
     created_at: str
+    onboarded_at: str | None = None
+    trader_type: str | None = None
+
+
+class MarkOnboardedRequest(BaseModel):
+    trader_type: str        # 'RETAIL' | 'HNI'
 
 
 class TierUpdateRequest(BaseModel):
@@ -243,6 +249,21 @@ async def register(req: RegisterRequest):
 
         await s.commit()
 
+    # Welcome email — fire-and-forget. If Resend key isn't set, this
+    # stubs safely (see notify_email.py). Registration should never fail
+    # because email delivery hiccupped.
+    try:
+        from app.notify_email import send_email, welcome_html
+        from app.config import settings as _s
+        await send_email(
+            to=user.email,
+            subject="Welcome to Reyu",
+            html=welcome_html(user.display_name or user.email.split("@")[0],
+                              dashboard_url=f"{_s.frontend_url}/onboarding"),
+        )
+    except Exception:
+        pass
+
     return TokenResponse(
         access_token=access,
         refresh_token=refresh,
@@ -252,6 +273,8 @@ async def register(req: RegisterRequest):
             "display_name": user.display_name,
             "tier": user.tier,
             "created_at": user.created_at.isoformat(),
+            "onboarded_at": user.onboarded_at.isoformat() if user.onboarded_at else None,
+            "trader_type": user.trader_type,
         },
     )
 
@@ -279,6 +302,8 @@ async def login(req: LoginRequest):
             "display_name": user.display_name,
             "tier": user.tier,
             "created_at": user.created_at.isoformat(),
+            "onboarded_at": user.onboarded_at.isoformat() if user.onboarded_at else None,
+            "trader_type": user.trader_type,
         },
     )
 
@@ -316,6 +341,8 @@ async def refresh(req: dict):
             "display_name": user.display_name,
             "tier": user.tier,
             "created_at": user.created_at.isoformat(),
+            "onboarded_at": user.onboarded_at.isoformat() if user.onboarded_at else None,
+            "trader_type": user.trader_type,
         },
     )
 
@@ -334,7 +361,30 @@ async def me(user: dict = Depends(require_user)):
         display_name=db_user.display_name or "",
         tier=db_user.tier,
         created_at=db_user.created_at.isoformat(),
+        onboarded_at=db_user.onboarded_at.isoformat() if db_user.onboarded_at else None,
+        trader_type=db_user.trader_type,
     )
+
+
+@router.post("/mark-onboarded")
+async def mark_onboarded(
+    req: MarkOnboardedRequest,
+    user_data: dict = Depends(require_user),
+):
+    """Called by the frontend when the user completes the onboarding flow.
+    Idempotent — sets `onboarded_at` and `trader_type`. Repeated calls
+    keep the original timestamp but can update trader_type."""
+    if req.trader_type not in ("RETAIL", "HNI"):
+        raise HTTPException(400, "trader_type must be RETAIL or HNI")
+    async with SessionLocal() as s:
+        u = (await s.execute(select(User).where(User.id == user_data["sub"]))).scalar_one_or_none()
+        if not u:
+            raise HTTPException(404, "User not found")
+        if not u.onboarded_at:
+            u.onboarded_at = datetime.utcnow()
+        u.trader_type = req.trader_type
+        await s.commit()
+    return {"ok": True, "onboarded_at": u.onboarded_at.isoformat(), "trader_type": u.trader_type}
 
 
 @router.post("/logout")
