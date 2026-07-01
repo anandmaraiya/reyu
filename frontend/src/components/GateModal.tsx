@@ -163,6 +163,10 @@ export function GateModal() {
                 ? <span className="gate-spinner" />
                 : mode === 'login' ? 'Sign in' : 'Create account — it\'s free'}
             </button>
+
+            {mode === 'login' && (
+              <ForgotPasswordLink email={email} />
+            )}
           </form>
         )}
 
@@ -247,6 +251,56 @@ function UsageBar({ label, used, max }: { label: string; used: number; max: numb
       <div style={{ height: 4, borderRadius: 2, background: 'var(--color-border)', overflow: 'hidden' }}>
         <div style={{ width: `${pct}%`, height: '100%', background: pct >= 90 ? 'var(--color-danger)' : 'var(--color-primary)', borderRadius: 2, transition: 'width 0.4s ease' }} />
       </div>
+    </div>
+  )
+}
+
+
+/** Forgot-password link + inline flow — request reset email without leaving the gate. */
+function ForgotPasswordLink({ email }: { email: string }) {
+  const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const submit = async () => {
+    if (!email || !email.includes('@')) {
+      setState('error'); setMsg('Enter your email above first, then click again.'); return
+    }
+    setState('sending'); setMsg(null)
+    try {
+      const { api } = await import('../api')
+      const { track, Events } = await import('../telemetry')
+      await api.post('/api/user/forgot-password', { email })
+      track(Events.ForgotPasswordRequested)
+      setState('sent')
+      setMsg('If that email exists, we\'ve sent a reset link. Check your inbox.')
+    } catch {
+      setState('error'); setMsg('Something went wrong. Try again in a moment.')
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 12, textAlign: 'center', fontSize: 12 }}>
+      {state === 'idle' && (
+        <button
+          type="button"
+          onClick={submit}
+          style={{
+            background: 'none', border: 'none', color: 'var(--color-primary)',
+            cursor: 'pointer', textDecoration: 'underline', fontSize: 12,
+          }}
+        >
+          Forgot password?
+        </button>
+      )}
+      {state === 'sending' && <span style={{ color: 'var(--color-text-secondary)' }}>Sending…</span>}
+      {msg && (
+        <div style={{
+          marginTop: 8,
+          color: state === 'error' ? 'var(--color-danger)' : 'var(--color-primary)',
+        }}>
+          {msg}
+        </div>
+      )}
     </div>
   )
 }

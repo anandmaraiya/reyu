@@ -7,28 +7,46 @@
 #
 # Everything is same-origin from the browser's POV, so CORS is moot.
 #
-# Local / IP-only deployment:
-#   listen on :80 — visit http://<VM_IP>/
+# CURRENT MODE: IP-based (:80). No HTTPS. For testing.
 #
-# When you have a domain, replace `:80` with `reyu.yourdomain.com` and Caddy
-# will auto-provision a Let's Encrypt cert. Don't forget to update Fyers
-# dashboard redirect_uri + .env FYERS_REDIRECT_URI / CORS_ORIGINS.
+# To switch to HTTPS with a domain later:
+#   1. Comment out the `:80` block
+#   2. Uncomment the `app.reyu.ai` block
+#   3. DNS A record: app.reyu.ai -> <VM_PUBLIC_IP>
+#   4. GCP firewall open on tcp:80 (ACME HTTP-01 challenge) + tcp:443
+#   5. Update .env FYERS_REDIRECT_URI / CORS_ORIGINS / FRONTEND_URL
+#      to https://app.reyu.ai/...
+#   6. Update Fyers dashboard redirect_uri to match
 
 :80 {
-    # Backend API
     handle /api/* {
         reverse_proxy backend:8000
     }
-
-    # WebSockets — same origin, Caddy negotiates the upgrade automatically
     handle /ws/* {
         reverse_proxy backend:8000
     }
-
-    # Everything else -> Vite dev server (HMR WebSocket works through this)
     handle {
         reverse_proxy frontend:5173
     }
-
     encode gzip
 }
+
+# ── HTTPS mode (production) — enable when domain is ready ──
+# app.reyu.ai {
+#     handle /api/* {
+#         reverse_proxy backend:8000
+#     }
+#     handle /ws/* {
+#         reverse_proxy backend:8000
+#     }
+#     handle {
+#         reverse_proxy frontend:5173
+#     }
+#     encode gzip
+#     header {
+#         Strict-Transport-Security "max-age=31536000; includeSubDomains"
+#         X-Content-Type-Options "nosniff"
+#         X-Frame-Options "SAMEORIGIN"
+#         Referrer-Policy "strict-origin-when-cross-origin"
+#     }
+# }

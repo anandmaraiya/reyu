@@ -148,6 +148,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     localStorage.setItem('reyu_user', JSON.stringify(u))
     setUser(u)
+    // Telemetry — identify so subsequent events attach to this user
+    import('../telemetry').then(t => t.identifyUser({ id: u.id, email: u.email, tier: u.tier }))
   }
 
   function _clearSession() {
@@ -155,6 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('reyu_refresh_token')
     localStorage.removeItem('reyu_user')
     setUser(null)
+    import('../telemetry').then(t => t.resetTelemetry())
   }
 
   // ── Auth actions ───────────────────────────────────────────────────────────

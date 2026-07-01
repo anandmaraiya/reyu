@@ -31,6 +31,8 @@ _PUBLIC_PATHS = [
     re.compile(r"^/api/user/register$"),
     re.compile(r"^/api/user/login$"),
     re.compile(r"^/api/user/refresh$"),
+    re.compile(r"^/api/user/forgot-password$"),
+    re.compile(r"^/api/user/reset-password$"),
     re.compile(r"^/api/stream/ws/"),       # WebSocket
     re.compile(r"^/ws/"),                  # WebSocket (without /api prefix)
     re.compile(r"^/api/chat"),             # chat endpoint (auth handled per-route)

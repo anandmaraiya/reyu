@@ -5,6 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import ScrollToTop from './ScrollToTop'
 import { ToastProvider } from './toast'
+import { initTelemetry } from './telemetry'
+
+// Init PostHog before the first render so page-view auto-capture starts on route zero.
+initTelemetry()
 
 // AuthProvider is inside App — no need to import here.
 

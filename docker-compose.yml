@@ -58,6 +58,9 @@ services:
       # Empty base — axios uses relative URLs, browser sends them to the
       # same origin (Caddy:80). Eliminates CORS entirely.
       - VITE_API_BASE=
+      # PostHog analytics — populated from .env at deploy time
+      - VITE_POSTHOG_KEY=${POSTHOG_API_KEY_PUBLIC:-}
+      - VITE_POSTHOG_HOST=${POSTHOG_HOST:-https://us.i.posthog.com}
     depends_on:
       - backend
     restart: unless-stopped

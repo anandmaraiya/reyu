@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     openrouter_referer: str = "https://reyu.ai"      # OpenRouter requires HTTP-Referer
     openrouter_app_name: str = "Reyu.ai Options Co-pilot"
 
+    # Resend transactional email — https://resend.com/api-keys
+    # Used for password reset, onboarding welcome, TP/SL notifications.
+    resend_api_key: str = ""
+    resend_from_email: str = "Reyu <no-reply@reyu.ai>"
+    frontend_url: str = "http://localhost:5173"     # base for links in emails
+
+    # PostHog analytics — https://posthog.com/project/settings
+    # Used server-side for critical events (login, upgrade, order).
+    # Frontend also uses this key (public write-only).
+    posthog_api_key: str = ""
+    posthog_host: str = "https://us.i.posthog.com"
+
     class Config:
         env_file = ".env"
         case_sensitive = False

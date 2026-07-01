@@ -350,6 +350,80 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+# Password-reset tokens live in Redis under `reset:<token>` = user_id,
+# with a 30-minute TTL. Fresh secrets are generated each request; there's
+# no persistent store, so an unused token expires naturally.
+RESET_TTL_MIN = 30
+RESET_TOKEN_KEY = "reset:{token}"
+
+
+@router.post("/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest):
+    """Issue a one-time reset token and email it. Always returns 200
+    regardless of whether the email exists — prevents user-enumeration.
+
+    The email lookup, token generation, and email send happen
+    server-side; the client never learns whether the email is known."""
+    from app.store import store as st
+    from app.notify_email import send_email, password_reset_html
+    from app.config import settings as _s
+
+    async with SessionLocal() as s:
+        u = (await s.execute(select(User).where(User.email == req.email))).scalar_one_or_none()
+
+    # Fire-and-forget: token is only issued when the user exists, but
+    # we return 200 either way so the API surface reveals nothing.
+    if u and u.is_active:
+        token = secrets.token_urlsafe(32)
+        await st.r.set(
+            RESET_TOKEN_KEY.format(token=token),
+            u.id,
+            ex=RESET_TTL_MIN * 60,
+        )
+        reset_url = f"{_s.frontend_url}/reset-password?token={token}"
+        await send_email(
+            to=u.email,
+            subject="Reset your Reyu password",
+            html=password_reset_html(reset_url, valid_minutes=RESET_TTL_MIN),
+        )
+
+    return {"ok": True, "message": "If that email exists, a reset link was sent."}
+
+
+@router.post("/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    """Consume a reset token and set a new password."""
+    from app.store import store as st
+    if len(req.new_password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+    user_id = await st.r.get(RESET_TOKEN_KEY.format(token=req.token))
+    if not user_id:
+        raise HTTPException(400, "Reset link is invalid or has expired. Request a new one.")
+    if isinstance(user_id, bytes):
+        user_id = user_id.decode()
+
+    async with SessionLocal() as s:
+        u = (await s.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if not u or not u.is_active:
+            raise HTTPException(400, "Account not found")
+        u.password_hash = pwd_context.hash(req.new_password)
+        await s.commit()
+
+    # Single-use: burn the token, invalidate any active refresh sessions
+    await st.r.delete(RESET_TOKEN_KEY.format(token=req.token))
+    await st.r.delete(f"refresh:{user_id}")
+    return {"ok": True, "message": "Password updated. Please log in with your new password."}
+
+
 @router.post("/change-password")
 async def change_password(req: ChangePasswordRequest, user_data: dict = Depends(require_user)):
     """Change authenticated user's password. Requires current password for verification."""

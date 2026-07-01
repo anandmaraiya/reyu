@@ -1,0 +1,123 @@
+"""Resend transactional email — thin HTTP wrapper.
+
+Why direct HTTP over the SDK: one fewer dependency, and the SDK doesn't
+buy us anything on top of a single POST call. Same pattern already used
+for Fyers.
+
+Usage:
+    from app.notify_email import send_email
+    await send_email(
+        to="user@example.com",
+        subject="Reset your Reyu password",
+        html="<p>Click ...</p>",
+    )
+
+Falls back to log-only when `RESEND_API_KEY` is unset — safe for
+local dev where you don't want to burn API quota or send real mail.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+import httpx
+
+from app.config import settings
+
+log = logging.getLogger("reyu.notify_email")
+
+
+async def send_email(
+    to: str,
+    subject: str,
+    html: str,
+    *,
+    from_email: Optional[str] = None,
+    reply_to: Optional[str] = None,
+) -> dict:
+    """Send a transactional email via Resend. Returns {ok, id | error}."""
+    if not settings.resend_api_key:
+        log.warning("[email-stub] to=%s subject=%r (RESEND_API_KEY unset)",
+                    to, subject)
+        return {"ok": False, "stub": True, "reason": "no_api_key"}
+
+    payload: dict = {
+        "from": from_email or settings.resend_from_email,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    }
+    if reply_to:
+        payload["reply_to"] = reply_to
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            r = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {settings.resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+        except httpx.RequestError as e:
+            log.exception("resend request failed to=%s: %s", to, e)
+            return {"ok": False, "error": str(e)}
+
+    if r.status_code >= 400:
+        log.warning("resend rejected to=%s status=%s body=%s",
+                    to, r.status_code, r.text[:200])
+        return {"ok": False, "status": r.status_code, "error": r.text[:500]}
+
+    body = r.json()
+    log.info("email sent to=%s id=%s", to, body.get("id"))
+    return {"ok": True, "id": body.get("id")}
+
+
+# ── Templates ─────────────────────────────────────────────────────────
+def password_reset_html(reset_url: str, valid_minutes: int = 30) -> str:
+    return f"""
+    <div style="font-family:-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#1a1a1a">
+      <h1 style="font-size:20px;margin:0 0 12px 0">Reset your Reyu password</h1>
+      <p style="line-height:1.5;color:#555">
+        You (or someone using your email) asked to reset the password
+        for your Reyu account. Click the button below to choose a new
+        password. This link is valid for {valid_minutes} minutes.
+      </p>
+      <p style="margin:24px 0">
+        <a href="{reset_url}" style="background:#059669;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:600;display:inline-block">
+          Reset password
+        </a>
+      </p>
+      <p style="font-size:13px;color:#888;line-height:1.5">
+        If you didn't request this, safe to ignore — your password won't change.
+      </p>
+      <p style="font-size:12px;color:#aaa;margin-top:32px">
+        Reyu — AI Options Copilot · <a href="https://reyu.ai" style="color:#888">reyu.ai</a>
+      </p>
+    </div>
+    """
+
+
+def welcome_html(display_name: str, dashboard_url: str) -> str:
+    return f"""
+    <div style="font-family:-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#1a1a1a">
+      <h1 style="font-size:20px;margin:0 0 12px 0">Welcome to Reyu, {display_name}!</h1>
+      <p style="line-height:1.5;color:#555">
+        Your AI options copilot is ready. Next steps:
+      </p>
+      <ol style="line-height:1.6;color:#555">
+        <li>Connect your Fyers broker so we can access live chain data</li>
+        <li>Run a backtest on any NIFTY strategy in one click</li>
+        <li>Watch the regime-router paper-live in action tomorrow at 09:25 IST</li>
+      </ol>
+      <p style="margin:24px 0">
+        <a href="{dashboard_url}" style="background:#059669;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:600;display:inline-block">
+          Open dashboard
+        </a>
+      </p>
+      <p style="font-size:12px;color:#aaa;margin-top:32px">
+        Reyu — AI Options Copilot · <a href="https://reyu.ai" style="color:#888">reyu.ai</a>
+      </p>
+    </div>
+    """
