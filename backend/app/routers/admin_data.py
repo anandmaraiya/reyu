@@ -291,7 +291,9 @@ async def regime_router_trades(
 ):
     """Recent regime-router paper trades. Powers the live-strategy card."""
     from app.db import RegimeRouterPaperTrade
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    # trade_date column is `timestamp without time zone` — asyncpg rejects
+    # tz-aware comparisons against naive columns. Strip tzinfo.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).replace(tzinfo=None)
     async with SessionLocal() as s:
         rows = (await s.execute(
             select(RegimeRouterPaperTrade)
