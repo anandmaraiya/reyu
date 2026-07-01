@@ -41,6 +41,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'charts',    label: 'Charts',        icon: <ChartsIcon />,    path: '/charts' },
   { id: 'chain',     label: 'Option Chain',  icon: <ChainIcon />,     path: '/chain' },
   { id: 'positions', label: 'Positions',     icon: <PositionsIcon />, path: '/positions' },
+  { id: 'journal',   label: 'Journal',       icon: <PortfolioIcon />, path: '/journal' },
   { id: 'strategies',label: 'Saved',         icon: <SavedIcon />,     path: '/strategies',group: 'My Strategies' },
   { id: 'backtest',  label: 'Backtest',      icon: <BacktestIcon />,  path: '/backtest',  group: 'My Strategies' },
   { id: 'compare',   label: 'Compare',       icon: <CompareIcon />,   path: '/compare',   group: 'My Strategies' },

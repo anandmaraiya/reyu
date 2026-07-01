@@ -33,6 +33,7 @@ const Chat           = lazy(() => import('./pages/Chat'))
 const DataAdmin      = lazy(() => import('./pages/DataAdmin'))
 const ResetPassword  = lazy(() => import('./pages/ResetPassword'))
 const Onboarding     = lazy(() => import('./pages/Onboarding'))
+const Journal        = lazy(() => import('./pages/Journal'))
 // Core
 const Dashboard      = lazy(() => import('./pages/Dashboard'))
 const Positions      = lazy(() => import('./pages/Positions'))
@@ -126,6 +127,7 @@ function AppShell() {
                 <Route path="/admin/data" element={<DataAdmin />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/onboarding" element={<Onboarding />} />
+                <Route path="/journal"    element={<Journal />} />
 
                 {/* RL dashboard */}
                 <Route path="/rl"         element={<RL />} />
