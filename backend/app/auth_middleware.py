@@ -44,6 +44,7 @@ _PUBLIC_PATHS = [
     re.compile(r"^/api/market/ticks/refresh$"),
     re.compile(r"^/api/orders/lot-sizes$"),   # static lookup table, no user data
     re.compile(r"^/api/catalog$"),            # public strategy catalog
+    re.compile(r"^/api/strategies/[^/]+/followers$"),   # public follower count
     re.compile(r"^/api/ts/"),              # read-only time-series
     re.compile(r"^/api/backtest/"),        # historical replay (read-only)
     re.compile(r"^/api/rl/"),              # RL trading engine (paper trades, read-only inspection)

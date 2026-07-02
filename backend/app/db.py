@@ -835,6 +835,22 @@ async def init_db() -> None:
             "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS copies_count INTEGER DEFAULT 0",
             "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS copied_from_id VARCHAR",
             "CREATE INDEX IF NOT EXISTS ix_strategies_published ON strategies (is_published, published_at DESC) WHERE is_published = TRUE",
+            # F-A11 copy-trade — follower subscribes to a leader's strategy.
+            # When the leader's runner fires a trade, we fan out to every
+            # active follower and mirror the trade under their own account.
+            """
+            CREATE TABLE IF NOT EXISTS strategy_follows (
+                follower_id VARCHAR NOT NULL,
+                leader_strategy_id VARCHAR NOT NULL,
+                follower_strategy_id VARCHAR NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                mode VARCHAR NOT NULL DEFAULT 'PAPER',     -- PAPER | LIVE
+                active BOOLEAN NOT NULL DEFAULT TRUE,
+                PRIMARY KEY (follower_id, leader_strategy_id)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_follows_leader ON strategy_follows (leader_strategy_id) WHERE active = TRUE",
+            "CREATE INDEX IF NOT EXISTS ix_follows_follower ON strategy_follows (follower_id) WHERE active = TRUE",
             # Drip email idempotency — one row per (user, template) so we
             # never spam the same drip twice.
             """

@@ -122,6 +122,27 @@ export default function Catalog() {
     },
   })
 
+  const follow = useMutation({
+    mutationFn: async (leaderId: string) =>
+      (await api.post('/api/follows', { leader_strategy_id: leaderId, mode: 'PAPER' })).data,
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['catalog'] })
+      nav(`/strategies/${data.follower_strategy_id}`)
+    },
+  })
+
+  const handleFollow = (id: string) => {
+    if (!user) {
+      openGate({
+        mode: 'login',
+        message: 'Sign in to follow this strategy.',
+        onSuccess: () => follow.mutate(id),
+      })
+      return
+    }
+    follow.mutate(id)
+  }
+
   const handleCopy = (id: string) => {
     if (!user) {
       openGate({
@@ -194,13 +215,29 @@ export default function Catalog() {
               <span style={S.copies}>
                 {s.copies_count === 0 ? 'No copies yet' : `${s.copies_count} ${s.copies_count === 1 ? 'copy' : 'copies'}`}
               </span>
-              <button
-                style={{ ...S.copyBtn, opacity: copy.isPending ? 0.5 : 1 }}
-                disabled={copy.isPending}
-                onClick={() => handleCopy(s.id)}
-              >
-                {copy.isPending ? 'Copying…' : 'Copy to my account'}
-              </button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  style={{
+                    ...S.copyBtn,
+                    background: 'var(--bg-elevated)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-default)',
+                    opacity: follow.isPending ? 0.5 : 1,
+                  }}
+                  disabled={follow.isPending}
+                  onClick={() => handleFollow(s.id)}
+                  title="Auto-mirror this strategy's trades under your account"
+                >
+                  {follow.isPending ? '…' : '⚡ Follow'}
+                </button>
+                <button
+                  style={{ ...S.copyBtn, opacity: copy.isPending ? 0.5 : 1 }}
+                  disabled={copy.isPending}
+                  onClick={() => handleCopy(s.id)}
+                >
+                  {copy.isPending ? 'Copying…' : 'Copy'}
+                </button>
+              </div>
             </div>
           </div>
         ))}

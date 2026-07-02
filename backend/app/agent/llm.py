@@ -72,6 +72,7 @@ async def chat_with_llm(
     vix: float | None = None,
     pcr: float | None = None,
     plan_hint: str | None = None,
+    chat_session_id: str | None = None,
 ) -> dict:
     """Run an agentic loop. Returns the same shape as TOOLS handlers:
        { text, chart?, chart_post?, data? }
@@ -157,6 +158,8 @@ async def chat_with_llm(
                         args = json.loads(fn.get("arguments") or "{}")
                     except Exception:
                         args = {}
+                    if chat_session_id:
+                        args.setdefault("chat_session_id", chat_session_id)
                     result = await call_tool(name, args, user)
                     # Capture the first chart we see for the final response
                     if chart is None and result.get("chart"):

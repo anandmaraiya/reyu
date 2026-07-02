@@ -276,7 +276,56 @@ TOOLS: dict[str, dict[str, Any]] = {
         },
         "handler": t_backtest_strategy,
     },
+    "update_chat_plan": {
+        "description": (
+            "Record what you've learned in this conversation so far. Update whenever "
+            "the user's goal, symbol, bias, target/stop, or draft strategy becomes clearer. "
+            "This state persists across turns — future turns will see it in your context. "
+            "Call this frequently. Include an add_decision entry whenever you make a "
+            "recommendation the user accepts."
+        ),
+        "parameters": {
+            "goal":         "string (what user wants this session)",
+            "underlying":   "string (e.g. NSE:NIFTY50-INDEX)",
+            "bias":         "string (bullish|bearish|range|unclear)",
+            "brackets":     "object ({target_pct, stop_pct} — floats 0..1)",
+            "strategy_draft": "object (partial spec being built)",
+            "next_step":    "string (what you suggest doing next)",
+            "add_decision": "object ({choice, why} — appended to decision log)",
+            "chat_session_id": "string (auto-injected by chat router)",
+        },
+        "handler": None,        # set below to avoid a forward-ref
+    },
 }
+
+
+async def t_update_chat_plan(args: dict, _user: dict | None) -> dict:
+    """Merge `args` into the persistent chat plan for the current session."""
+    from app.chat_plan import update_plan
+    sid = args.pop("chat_session_id", None)
+    if not sid:
+        return {"text": "Plan not updated — session id missing.", "data": None}
+
+    patch: dict = {k: v for k, v in args.items()
+                   if v is not None and k not in ("add_decision",)}
+    if args.get("add_decision"):
+        from datetime import datetime as _dt
+        patch["decisions"] = [{
+            "ts": _dt.utcnow().isoformat(),
+            **args["add_decision"],
+        }]
+    updated = await update_plan(sid, patch)
+    return {
+        "text": f"Plan updated. Now tracking: "
+                f"goal={updated.get('goal')!r}, "
+                f"underlying={updated.get('underlying')!r}, "
+                f"bias={updated.get('bias')!r}, "
+                f"{len(updated.get('decisions') or [])} decisions logged.",
+        "data": updated,
+    }
+
+
+TOOLS["update_chat_plan"]["handler"] = t_update_chat_plan
 
 
 async def call_tool(name: str, args: dict, user: dict | None = None) -> dict:

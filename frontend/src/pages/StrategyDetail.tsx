@@ -13,6 +13,8 @@ import {
 } from 'recharts'
 import { api } from '../api'
 import { useToast } from '../toast'
+import ConfirmDangerModal from '../components/ConfirmDangerModal'
+import PreflightPanel from '../components/PreflightPanel'
 import { chartTooltipStyles } from '../chartTheme'
 
 const num = (n: any, d = 2) =>
@@ -295,15 +297,33 @@ function LiveTab({
     refetchInterval: 5000,
   })
 
+  const [promoteMode, setPromoteMode] = useState<'PAPER_LIVE' | 'LIVE' | null>(null)
+  const [promotePreflight, setPromotePreflight] = useState<any>(null)
+
   const promote = useMutation({
-    mutationFn: () =>
-      api.post(`/api/strategies/${strategyId}/promote?mode=PAPER_LIVE`),
-    onSuccess: () => {
-      toast.push('success', 'Promoted to PAPER_LIVE — scheduler will start firing trades')
+    mutationFn: async ({ mode }: { mode: 'PAPER_LIVE' | 'LIVE' }) => {
+      const params = mode === 'LIVE' ? '?mode=LIVE&confirm=true' : '?mode=PAPER_LIVE'
+      return (await api.post(`/api/strategies/${strategyId}/promote${params}`)).data
+    },
+    onSuccess: (data) => {
+      toast.push('success',
+        data.status === 'LIVE'
+          ? 'Promoted to LIVE — real orders will fire when signals hit'
+          : 'Promoted to PAPER_LIVE — scheduler will fire paper trades'
+      )
+      setPromoteMode(null)
+      setPromotePreflight(null)
       qc.invalidateQueries({ queryKey: ['strategy', strategyId] })
     },
-    onError: (e: any) =>
-      toast.push('error', e?.response?.data?.detail || 'Promote failed'),
+    onError: (e: any) => {
+      // Preflight FAIL returns 400 with structured `preflight` payload
+      const detail = e?.response?.data?.detail
+      if (typeof detail === 'object' && detail?.preflight) {
+        setPromotePreflight(detail.preflight)
+        return
+      }
+      toast.push('error', typeof detail === 'string' ? detail : 'Promote failed')
+    },
   })
 
   const halt = useMutation({
@@ -350,10 +370,19 @@ function LiveTab({
             className="btn btn-primary"
             onClick={() => {
               if (confirm('Promote to PAPER_LIVE? Scheduler will fire paper trades every minute during market hours.'))
-                promote.mutate()
+                promote.mutate({ mode: 'PAPER_LIVE' })
             }}
           >
             Go Paper-Live
+          </button>
+        )}
+        {strategy.status === 'PAPER_LIVE' && (
+          <button
+            className="btn"
+            style={{ background: 'var(--danger)', color: '#fff', marginLeft: 8 }}
+            onClick={() => setPromoteMode('LIVE')}
+          >
+            🚀 Promote to LIVE
           </button>
         )}
         {isLive && data?.active_run?.id && (
@@ -506,6 +535,35 @@ function LiveTab({
       >
         ⟳ auto-refreshes every 5 s
       </div>
+
+      {/* LIVE promotion — typed-confirm modal with preflight results */}
+      <ConfirmDangerModal
+        open={promoteMode === 'LIVE'}
+        title="Promote to LIVE trading"
+        description={
+          `Promoting to LIVE means the platform will place real orders on your ` +
+          `broker account when this strategy signals. This spends real money and ` +
+          `is irreversible per-trade. Preflight below shows what would fire.`
+        }
+        expectedText={strategy?.name || 'CONFIRM'}
+        confirmLabel={promote.isPending ? 'Promoting…' : 'Promote to LIVE'}
+        variant="danger"
+        extraGate={promotePreflight?.verdict !== 'FAIL'}
+        onCancel={() => { setPromoteMode(null); setPromotePreflight(null) }}
+        onConfirm={() => promote.mutate({ mode: 'LIVE' })}
+      >
+        {promotePreflight && <PreflightPanel result={promotePreflight} loading={false} />}
+        {!promotePreflight && (
+          <div style={{
+            padding: 10, fontSize: 12,
+            color: 'var(--text-secondary)',
+            background: 'var(--bg-sunken)',
+            borderRadius: 4, marginBottom: 12,
+          }}>
+            Preflight runs on submit — checks broker auth, margin, lot sizes.
+          </div>
+        )}
+      </ConfirmDangerModal>
     </div>
   )
 }

@@ -175,6 +175,7 @@ async def chat(
         trial_days_left=user.get("trial_days_left") if user else None,
         connected_brokers=user.get("connected_brokers") if user else None,
         plan_hint=plan_hint,
+        chat_session_id=sid,
     )
 
     if claude_llm.is_enabled():

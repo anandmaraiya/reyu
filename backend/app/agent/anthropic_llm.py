@@ -71,6 +71,7 @@ async def chat_with_claude(
     vix: float | None = None,
     pcr: float | None = None,
     plan_hint: str | None = None,
+    chat_session_id: str | None = None,
 ) -> dict:
     """Same interface as llm.chat_with_llm — swappable at the caller."""
     if not is_enabled():
@@ -155,6 +156,8 @@ async def chat_with_claude(
                 for tu in tool_uses:
                     name = tu.get("name", "")
                     args = tu.get("input") or {}
+                    if chat_session_id:
+                        args.setdefault("chat_session_id", chat_session_id)
                     result = await call_tool(name, args, user)
                     if chart is None and result.get("chart"):
                         chart = result["chart"]

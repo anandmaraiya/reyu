@@ -225,6 +225,18 @@ async def _execute_run_inner(run_id: str) -> None:
             for i in range(0, len(trade_rows), BATCH):
                 await s.execute(pg_insert(StrategyTrade).values(trade_rows[i:i + BATCH]))
 
+            # F-A11 fan-out: mirror each trade to every active follower's
+            # copy of this strategy. Errors are logged and swallowed so a
+            # follower-side hiccup can't fail the leader's trade insert.
+            try:
+                from app.routers.follows import fan_out_trade
+                for t_row in trade_rows:
+                    await fan_out_trade(run.strategy_id, t_row)
+            except Exception as _e:
+                import logging as _log
+                _log.getLogger("reyu.runner").warning(
+                    "fan_out_trade failed for run=%s: %s", run_id, _e)
+
         row = (await s.execute(
             select(StrategyRun).where(StrategyRun.id == run_id)
         )).scalar_one()

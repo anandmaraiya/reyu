@@ -96,17 +96,202 @@ class ZerodhaBroker(BrokerClient):
         ]
 
     async def get_option_chain(self, underlying: str, expiry: datetime | None = None) -> OptionChain:
-        # Zerodha does not have a native option chain endpoint;
-        # must be constructed from instruments + quotes.
-        raise NotImplementedError("Zerodha option chain requires instruments lookup + quote call — TODO")
+        """Kite doesn't expose a single chain endpoint. We:
+          1. Load the NFO instruments dump (cached daily in Redis)
+          2. Filter to (name == underlying, expiry == target)
+          3. Batch-quote the ATM ± 15 strikes
+          4. Normalise to OptionChain
+        """
+        if not self._kite:
+            raise RuntimeError("Zerodha not connected")
+
+        # Underlying naming: 'NIFTY' etc. — strip our NSE:/-INDEX conventions
+        u = underlying.upper().replace("NSE:", "").replace("BSE:", "").replace("-INDEX", "").replace("-EQ", "")
+        if u.startswith("NIFTY") and "BANK" not in u and u != "NIFTY":
+            # NSE:NIFTY50-INDEX → NIFTY
+            u = "NIFTY"
+
+        instruments = await self._nfo_instruments()
+        matching = [i for i in instruments if i.get("name") == u]
+        if not matching:
+            raise RuntimeError(f"No NFO instruments found for underlying {u!r}")
+
+        # Pick target expiry — nearest weekly if not specified
+        expiries = sorted({i["expiry"] for i in matching if i.get("expiry")})
+        if not expiries:
+            raise RuntimeError("No expiries in instruments dump")
+        target_expiry = expiry.date() if expiry else expiries[0]
+        legs_for_exp = [i for i in matching if i.get("expiry") == target_expiry]
+        if not legs_for_exp:
+            target_expiry = expiries[0]
+            legs_for_exp = [i for i in matching if i.get("expiry") == target_expiry]
+
+        # Spot from an underlying quote — LTPs give us ATM band
+        spot_symbol = f"NSE:{u}" if u.endswith("BANK") or u in ("NIFTY", "FINNIFTY") else f"NSE:{u}"
+        try:
+            spot_data = await run_in_threadpool(self._kite.ltp, [spot_symbol])
+            spot = float((spot_data.get(spot_symbol) or {}).get("last_price") or 0)
+        except Exception:
+            spot = 0.0
+
+        # ATM band: sort strikes, find closest to spot, take ±15
+        strikes = sorted({i["strike"] for i in legs_for_exp if i.get("strike")})
+        if not strikes or not spot:
+            atm_strike = strikes[len(strikes) // 2] if strikes else 0.0
+        else:
+            atm_strike = min(strikes, key=lambda k: abs(k - spot))
+        try:
+            idx = strikes.index(atm_strike)
+        except ValueError:
+            idx = len(strikes) // 2
+        band = set(strikes[max(0, idx - 15): idx + 16])
+
+        # Batch quote for the whole band × CE/PE
+        symbols_to_quote = [
+            f"NFO:{i['tradingsymbol']}"
+            for i in legs_for_exp
+            if i.get("strike") in band and i.get("instrument_type") in ("CE", "PE")
+        ]
+        quotes: dict = {}
+        if symbols_to_quote:
+            try:
+                # Kite caps quote() at ~500 symbols per call — chunk defensively
+                CHUNK = 250
+                for i in range(0, len(symbols_to_quote), CHUNK):
+                    q = await run_in_threadpool(self._kite.quote, symbols_to_quote[i:i + CHUNK])
+                    quotes.update(q)
+            except Exception as e:
+                log.warning("kite.quote (chain) failed: %s", e)
+
+        # Build OptionLegs
+        legs: list[OptionLeg] = []
+        exp_dt = datetime.combine(target_expiry, datetime.min.time())
+        for inst in legs_for_exp:
+            strike = inst.get("strike")
+            if strike not in band:
+                continue
+            opt_type = inst.get("instrument_type", "")
+            if opt_type not in ("CE", "PE"):
+                continue
+            q = quotes.get(f"NFO:{inst['tradingsymbol']}") or {}
+            legs.append(OptionLeg(
+                symbol=f"NFO:{inst['tradingsymbol']}",
+                strike=float(strike),
+                expiry=exp_dt,
+                option_type=opt_type,
+                oi=int(q.get("oi") or 0),
+                oi_change=int(q.get("oi_day_change") or 0),
+                volume=int(q.get("volume") or 0),
+                ltp=float(q.get("last_price") or 0),
+            ))
+
+        return OptionChain(
+            underlying=underlying,
+            spot=spot,
+            expiry=exp_dt,
+            atm_strike=float(atm_strike),
+            legs=legs,
+        )
+
+    async def _instrument_token(self, symbol: str) -> int | None:
+        """Reverse-lookup an instrument_token from an NFO or NSE symbol.
+        Uses the same cached instruments dump used by option_chain."""
+        # Strip exchange prefix
+        ts = symbol.split(":", 1)[-1]
+        # Try NFO first (options/futures), then NSE (equities)
+        for exchange in ("NFO", "NSE"):
+            if exchange == "NFO":
+                dump = await self._nfo_instruments()
+            else:
+                # NSE equity instruments — cached separately
+                from app.store import store
+                import json as _json
+                raw = await store.r.get("zerodha:instruments:NSE")
+                dump = _json.loads(raw.decode() if isinstance(raw, bytes) else raw) if raw else []
+                if not dump and self._kite:
+                    try:
+                        dump = await run_in_threadpool(self._kite.instruments, "NSE")
+                        # Serialise + cache
+                        serialisable = []
+                        for d in dump:
+                            item = dict(d)
+                            if hasattr(item.get("expiry"), "isoformat"):
+                                item["expiry"] = item["expiry"].isoformat()
+                            serialisable.append(item)
+                        await store.r.set(
+                            "zerodha:instruments:NSE",
+                            _json.dumps(serialisable), ex=12 * 3600,
+                        )
+                    except Exception as e:
+                        log.warning("kite.instruments(NSE) failed: %s", e)
+                        continue
+            for inst in dump:
+                if inst.get("tradingsymbol") == ts:
+                    tok = inst.get("instrument_token")
+                    if tok:
+                        return int(tok)
+        return None
+
+    async def _nfo_instruments(self) -> list[dict]:
+        """Load & cache the NFO instruments dump. Refreshes daily in Redis
+        since NSE publishes updated contracts weekly."""
+        from app.store import store
+        CACHE_KEY = "zerodha:instruments:NFO"
+        raw = await store.r.get(CACHE_KEY)
+        if raw:
+            import json as _json
+            try:
+                if isinstance(raw, bytes):
+                    raw = raw.decode()
+                return _json.loads(raw)
+            except Exception:
+                pass
+
+        # Fetch fresh — kite.instruments returns a big list of dicts
+        if not self._kite:
+            return []
+        try:
+            data = await run_in_threadpool(self._kite.instruments, "NFO")
+        except Exception as e:
+            log.warning("kite.instruments failed: %s", e)
+            return []
+
+        # Kite gives datetime objects in `expiry` — serialise for JSON
+        import json as _json
+        serialisable = []
+        for d in data:
+            item = dict(d)
+            if hasattr(item.get("expiry"), "isoformat"):
+                item["expiry"] = item["expiry"].isoformat()
+            serialisable.append(item)
+
+        # 12h TTL — refresh twice daily to catch new contracts
+        await store.r.set(CACHE_KEY, _json.dumps(serialisable), ex=12 * 3600)
+
+        # Return post-hydration (parse the expiry strings back to date)
+        from datetime import date as _date
+        for item in data:
+            exp = item.get("expiry")
+            if isinstance(exp, str):
+                try:
+                    item["expiry"] = _date.fromisoformat(exp)
+                except Exception:
+                    pass
+        return data
 
     async def get_history(self, symbol: str, resolution: str, from_dt: datetime, to_dt: datetime) -> list[HistoryBar]:
         if not self._kite:
             return []
         interval_map = {"1": "minute", "5": "5minute", "15": "15minute", "D": "day"}
+        # Kite historical_data needs an instrument_token, not a tradingsymbol.
+        # We look it up from the cached instruments dump.
+        token = await self._instrument_token(symbol)
+        if not token:
+            log.warning("no instrument_token for %s — historical skipped", symbol)
+            return []
         try:
             data = await run_in_threadpool(
-                self._kite.historical_data, symbol, from_dt, to_dt,
+                self._kite.historical_data, token, from_dt, to_dt,
                 interval_map.get(resolution, "minute"),
             )
         except Exception as e:
