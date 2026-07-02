@@ -12,19 +12,19 @@ export type PageDoc = {
   title: string
   subtitle: string
   what: string
-  actions?: { name: string; detail: string }[]
-  tips?: string[]
-  blocked?: string[]
+  actions?: readonly { name: string; detail: string }[]
+  tips?: readonly string[]
+  blocked?: readonly string[]
 }
 
 export const pageDocs = {
   chat: {
     title: 'Reyu AI',
-    subtitle: 'Your options-trading copilot',
-    what: `Ask Reyu about the current market, a specific chain, a strategy you're considering, or general options concepts. Reyu reads live data (option chain, bias, regime) and turns it into plain English.`,
+    subtitle: 'Your strategy-automation assistant',
+    what: `Ask Reyu about the current market, a specific chain, or a strategy you're building. Reyu reads live data (option chain, bias, regime) and turns it into plain English, then helps you build, test, and deploy your own strategies. Reyu is not an investment adviser and does not recommend trades — you approve every step.`,
     actions: [
-      { name: 'Ask', detail: 'Type any question. Try "What's the mood on NIFTY today?" or "Explain iron condor to me".' },
-      { name: 'Nudges', detail: 'The chips above the input suggest what to ask next based on today's data.' },
+      { name: 'Ask', detail: `Type any question. Try "What's the mood on NIFTY today?" or "Explain iron condor to me".` },
+      { name: 'Nudges', detail: `The chips above the input suggest what to ask next based on today's data.` },
       { name: 'Build', detail: 'Ask Reyu to draft a strategy — it creates a DRAFT you can review in /strategies.' },
     ],
     tips: [
@@ -39,7 +39,7 @@ export const pageDocs = {
     what: `Live option chain for any NSE F&O symbol with AI-driven bias, PCR + max-pain interpretation, and today's suggested regime. The top intelligence bar tells you what the platform would do right now; the chain below is the raw data behind it.`,
     actions: [
       { name: 'Switch symbol', detail: 'Click any ticker chip (NIFTY, BANKNIFTY, RELIANCE, etc.) at the top toolbar.' },
-      { name: 'Regime pill', detail: 'Top of page — persistent hint on TREND UP / TREND DOWN / SIDEWAYS / FLAT based on today's PCR + momentum.' },
+      { name: 'Regime pill', detail: `Top of page — persistent hint on TREND UP / TREND DOWN / SIDEWAYS / FLAT based on today's PCR + momentum.` },
       { name: 'AI Bias tile', detail: 'The BULL/BEAR/RANGE reading with the top data signal explaining why.' },
       { name: 'Insights', detail: 'Three auto-generated cards: largest OI shift, max-pain distance, unusual writing.' },
       { name: 'Quick actions', detail: '"Ask Reyu about this chain" prefills a query; "Build a strategy" jumps to the builder with the current symbol.' },

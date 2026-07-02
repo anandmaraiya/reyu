@@ -14,9 +14,43 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select, desc
 
 from app.db import SessionLocal, AuditLog
-from app.routers.user_auth import require_superadmin
+from app.routers.user_auth import require_superadmin, require_user
 
 router = APIRouter(prefix="/api/audit", tags=["audit"])
+
+
+@router.get("/my")
+async def my_activity(
+    days: int = Query(90, ge=1, le=730),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    user: dict = Depends(require_user),
+):
+    """A user's own compliance trail — the prompts they sent Reyu, the AI
+    responses, legal acceptances, approvals, and executed orders. Users can
+    only ever see their own rows (filtered by actor_id)."""
+    since = datetime.utcnow() - timedelta(days=days)
+    async with SessionLocal() as s:
+        q = (select(AuditLog)
+             .where(AuditLog.ts >= since, AuditLog.actor_id == user["sub"])
+             .order_by(desc(AuditLog.ts)).limit(limit).offset(offset))
+        rows = (await s.execute(q)).scalars().all()
+    import json as _json
+    return {
+        "days": days,
+        "entries": [
+            {
+                "id": r.id,
+                "ts": r.ts.isoformat() if r.ts else None,
+                "event_type": r.event_type,
+                "resource_type": r.resource_type,
+                "resource_id": r.resource_id,
+                "action": r.action,
+                "meta": _json.loads(r.meta) if r.meta else None,
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.get("/log")

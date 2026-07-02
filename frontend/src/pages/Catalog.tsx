@@ -13,6 +13,7 @@ import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { track, Events } from '../telemetry'
 import PageHelp from '../components/PageHelp'
+import RiskNote from '../components/RiskNote'
 
 type Preview = {
   kind: string | null
@@ -163,6 +164,8 @@ export default function Catalog() {
         Discover strategies other traders have published. Copy any into your account as a
         draft — backtest, review, then promote to paper or live at your own pace.
       </p>
+
+      <RiskNote />
 
       <div style={S.toolbar}>
         <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Sort</span>

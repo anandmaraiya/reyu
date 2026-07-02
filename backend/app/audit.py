@@ -25,6 +25,8 @@ Event-type conventions (extend as new money paths land):
     BROKER_CONNECT / BROKER_DISCONNECT
     STRATEGY_CREATE / STRATEGY_PROMOTE / STRATEGY_HALT / STRATEGY_DELETE
     ORDER_EXIT / ORDER_EXECUTE
+    CHAT_TURN (prompt + AI response, for compliance retention)
+    LEGAL_ACCEPT (versioned acceptance of a legal/compliance document)
     SUBSCRIPTION_UPGRADE / SUBSCRIPTION_CANCEL
     SUPERADMIN_ACTION (for anything algo@reyu.ai does that affects data)
 """

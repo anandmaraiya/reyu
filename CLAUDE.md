@@ -4,7 +4,11 @@
 
 ## Project
 
-Options trading platform integrating Fyers API for Indian markets. Core features: real-time option chains with Greeks, automated hedging strategies, portfolio management, scalping signals, and paper trading. Backend serves analytics endpoints; frontend provides trading dashboards with WebSocket ticks.
+AI-powered options **strategy-automation** platform for Indian markets, integrating Fyers API. Users build, backtest, forward-test, approve, and deploy **their own** trading strategies (paper and live). The platform is **not** an investment adviser or portfolio manager — it gives no investment advice, makes no profitability claims, and does not rank strategies by performance. Users can also share or sell strategies for others to run. The AI assistant is personified as **"Reyu"**, the platform assistant that guides users from idea → backtest → forward-test → approval → live execution.
+
+Core features: real-time option chains with Greeks, backtesting + risk metrics + forward testing, strategy catalog/copy/follow, gated live execution, and a versioned legal/compliance layer (Terms of Use, SEBI/NSE risk disclosure, execution authorization, privacy policy) with a full audit trail of prompts, AI responses, approvals, and executed orders. Backend serves analytics endpoints; frontend provides trading dashboards with WebSocket ticks.
+
+Compliance guardrails when editing: never introduce copy that gives investment advice, promises returns, or ranks strategies by profitability. LIVE deployment must stay gated behind explicit user confirmation + legal acceptance (see `app/legal.py`, `app/routers/legal.py`).
 
 ## Stack
 

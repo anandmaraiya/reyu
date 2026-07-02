@@ -16,6 +16,7 @@ import { useAuth } from './context/AuthContext'
 
 import { AuthProvider }  from './context/AuthContext'
 import { GateModal }     from './components/GateModal'
+import LegalGate         from './components/LegalGate'
 import { MarketRibbon }  from './components/MarketRibbon'
 import { Sidebar }       from './components/Sidebar'
 import ErrorBoundary     from './ErrorBoundary'
@@ -35,6 +36,8 @@ const ResetPassword  = lazy(() => import('./pages/ResetPassword'))
 const Onboarding     = lazy(() => import('./pages/Onboarding'))
 const Journal        = lazy(() => import('./pages/Journal'))
 const Catalog        = lazy(() => import('./pages/Catalog'))
+const Legal          = lazy(() => import('./pages/Legal'))
+const Activity       = lazy(() => import('./pages/Activity'))
 // Core
 const Dashboard      = lazy(() => import('./pages/Dashboard'))
 const Positions      = lazy(() => import('./pages/Positions'))
@@ -150,6 +153,9 @@ function AppShell() {
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/journal"    element={<Journal />} />
                 <Route path="/catalog"    element={<Catalog />} />
+                <Route path="/legal"          element={<Legal />} />
+                <Route path="/legal/:docType" element={<Legal />} />
+                <Route path="/activity"       element={<Activity />} />
 
                 {/* RL dashboard */}
                 <Route path="/rl"         element={<RL />} />
@@ -174,6 +180,7 @@ function AppShell() {
 
       {/* Global overlays */}
       <GateModal />
+      <LegalGate />
       <CommandPalette toggleTheme={toggleTheme} />
 
       {/* First-run onboarding gate — redirects logged-in users with

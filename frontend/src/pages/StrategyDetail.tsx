@@ -15,6 +15,10 @@ import { api } from '../api'
 import { useToast } from '../toast'
 import ConfirmDangerModal from '../components/ConfirmDangerModal'
 import PreflightPanel from '../components/PreflightPanel'
+import LegalAcceptModal from '../components/LegalAcceptModal'
+import RiskNote from '../components/RiskNote'
+import StrategyJourney from '../components/StrategyJourney'
+import type { LegalDocMeta } from '../legal'
 import { chartTooltipStyles } from '../chartTheme'
 
 const num = (n: any, d = 2) =>
@@ -162,6 +166,12 @@ export default function StrategyDetail() {
 
   return (
     <div className="page-shell">
+      <RiskNote>
+        This strategy is yours to test and deploy — Reyu doesn't recommend it or claim it's
+        profitable. Backtest and forward-test results are hypothetical and don't predict future
+        outcomes. Live deployment places real orders and needs your explicit approval.
+      </RiskNote>
+      <StrategyJourney status={strat.status} />
       {/* Header */}
       <div className="card">
         <div
@@ -299,6 +309,7 @@ function LiveTab({
 
   const [promoteMode, setPromoteMode] = useState<'PAPER_LIVE' | 'LIVE' | null>(null)
   const [promotePreflight, setPromotePreflight] = useState<any>(null)
+  const [legalPending, setLegalPending] = useState<LegalDocMeta[] | null>(null)
 
   const promote = useMutation({
     mutationFn: async ({ mode }: { mode: 'PAPER_LIVE' | 'LIVE' }) => {
@@ -316,8 +327,13 @@ function LiveTab({
       qc.invalidateQueries({ queryKey: ['strategy', strategyId] })
     },
     onError: (e: any) => {
-      // Preflight FAIL returns 400 with structured `preflight` payload
       const detail = e?.response?.data?.detail
+      // Legal acceptance required — 451 with structured `legal_pending`.
+      if (e?.response?.status === 451 && typeof detail === 'object' && detail?.legal_pending) {
+        setLegalPending(detail.legal_pending)
+        return
+      }
+      // Preflight FAIL returns 400 with structured `preflight` payload
       if (typeof detail === 'object' && detail?.preflight) {
         setPromotePreflight(detail.preflight)
         return
@@ -564,6 +580,21 @@ function LiveTab({
           </div>
         )}
       </ConfirmDangerModal>
+
+      {/* LIVE execution authorization — shown when the backend returns 451
+          (legal acceptance required) on a LIVE promote attempt. */}
+      {legalPending && (
+        <LegalAcceptModal
+          docs={legalPending}
+          title="Authorize live execution"
+          subtitle={
+            'Deploying to LIVE places real orders on your broker account. ' +
+            'Please review and accept the following before continuing.'
+          }
+          onClose={() => setLegalPending(null)}
+          onAccepted={() => { setLegalPending(null); promote.mutate({ mode: 'LIVE' }) }}
+        />
+      )}
     </div>
   )
 }

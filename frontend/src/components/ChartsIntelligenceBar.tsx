@@ -330,7 +330,7 @@ export default function ChartsIntelligenceBar({
         </div>
 
         <div style={S.heroCard}>
-          <div style={S.heroLabel}>Suggested action</div>
+          <div style={S.heroLabel}>Regime read</div>
           <div style={{ ...S.heroValue, fontSize: 18 }}>
             {regime.action}
           </div>

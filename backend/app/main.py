@@ -8,7 +8,7 @@ from app.routers import (
     auth, user_auth, options, analytics, watchlist, portfolio, scalping,
     timeseries, stream, orders, strategy, system, journal, notify, admin, chat, charts, telegram,
     backtest, billing, data_api, webhook_subs, rl, snapshot_health, strategies, data_lake, eod_backtest, intraday,
-    admin_data, preflight, audit, catalog, follows,
+    admin_data, preflight, audit, catalog, follows, legal,
 )
 from app.routers import brokers as brokers_router
 from app.routers import market as market_router
@@ -162,6 +162,7 @@ app.include_router(catalog.router)         # prefix="/api/catalog" is set inside
 app.include_router(catalog.publish_router) # prefix="/api/strategies" for the publish toggle
 app.include_router(follows.router)         # prefix="/api/follows"
 app.include_router(follows.followers_router) # prefix="/api/strategies" for followers count
+app.include_router(legal.router)           # prefix="/api/legal" — compliance docs + acceptance
 
 
 @app.get("/api/health")

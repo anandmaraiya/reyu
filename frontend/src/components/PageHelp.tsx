@@ -120,7 +120,7 @@ const S = {
 
 export default function PageHelp({ pageId }: { pageId: keyof typeof pageDocs }) {
   const [open, setOpen] = useState(false)
-  const doc = pageDocs[pageId] as PageDoc | undefined
+  const doc: PageDoc | undefined = pageDocs[pageId]
 
   useEffect(() => {
     if (!open) return

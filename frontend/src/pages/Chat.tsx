@@ -179,8 +179,9 @@ export default function Chat() {
             {user ? `Hey ${user.display_name?.split(' ')[0] || 'there'} 👋` : "Hey, I'm Reyu"}
           </h1>
           <p className="chat-empty-sub">
-            Your expert AI options trading assistant for Indian markets.
-            Ask me anything — live prices, OI analysis, strategy ideas.
+            I'm Reyu, your assistant for building, testing, and deploying your own
+            options strategies on Indian markets. Ask about live data, OI analysis,
+            or let's build a strategy together — you approve every step.
             {!user && ' No login needed to start.'}
           </p>
           {starters.length > 0 && (
@@ -199,6 +200,11 @@ export default function Chat() {
               {' '}to save strategies · 15-day trial · no card needed
             </p>
           )}
+          <p style={{ fontSize: 10.5, color: 'var(--color-text-muted)', marginTop: 18, maxWidth: 460, lineHeight: 1.5 }}>
+            Reyu is a strategy-automation tool, not an investment adviser. It doesn't give
+            investment advice or guarantee profits. Derivatives trading is high-risk. See{' '}
+            <a href="/legal" style={{ color: 'var(--color-primary)' }}>Legal &amp; Risk</a>.
+          </p>
         </div>
       ) : (
         <div className="chat-thread" ref={threadRef}>

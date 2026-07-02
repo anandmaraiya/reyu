@@ -217,6 +217,24 @@ async def chat(
 
     await _save_message(sid, "assistant", text)
 
+    # Compliance audit — persist the prompt + AI response for signed-in
+    # users (Redis history expires in 7 days; the audit trail is the
+    # durable record of what Reyu was asked and how it answered).
+    if user_id:
+        from app.audit import record as _audit
+        await _audit(
+            event_type="CHAT_TURN",
+            actor_id=user_id, actor_email=user_email,
+            resource_type="chat_session", resource_id=sid,
+            action=f"via {tool_used}",
+            meta={
+                "prompt": req.message[:4000],
+                "response": (text or "")[:4000],
+                "tool": tool_used,
+            },
+            request=request,
+        )
+
     # Record usage — 1 message + N tokens (0 if regex path)
     tokens_used = int(result.get("tokens") or 0)
     await record_usage(

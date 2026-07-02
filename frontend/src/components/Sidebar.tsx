@@ -50,8 +50,10 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'portfolios',label: 'Portfolios',    icon: <PortfolioIcon />, path: '/portfolios',group: 'Watchlist' },
   { id: 'orders',    label: 'Order Audit',   icon: <OrderIcon />,     path: '/orders',    group: 'Watchlist' },
   { id: 'brokers',   label: 'Brokers',       icon: <BrokersIcon />,   path: '/brokers',   group: 'Account' },
+  { id: 'activity',  label: 'My Activity',   icon: <OrderIcon />,     path: '/activity',  group: 'Account' },
   { id: 'subscribe', label: 'Subscription',  icon: <SubIcon />,       path: '/subscribe', group: 'Account' },
   { id: 'settings',  label: 'Settings',      icon: <SettingsIcon />,  path: '/settings',  group: 'Account' },
+  { id: 'legal',     label: 'Legal',         icon: <SettingsIcon />,  path: '/legal',     group: 'Account' },
   { id: 'rl',        label: 'RL Engine',     icon: <RLIcon />,        path: '/rl',        group: 'Account', badge: 'LIVE' },
   // Superadmin only — Sidebar filters this for non-superadmins.
   { id: 'data-admin',label: 'Data Capture',  icon: <SettingsIcon />,  path: '/admin/data', group: 'Admin', badge: 'ADMIN' },
@@ -77,7 +79,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: { mobileOpen?: boolean; o
 
   function handleNav(item: NavItem) {
     // Protected paths prompt login if anonymous
-    const protected_ = ['/positions', '/strategies', '/backtest', '/compare', '/orders', '/brokers', '/subscribe', '/rl']
+    const protected_ = ['/positions', '/strategies', '/backtest', '/compare', '/orders', '/brokers', '/subscribe', '/rl', '/activity']
     if (!user && protected_.includes(item.path)) {
       openGate({ mode: 'login', message: `Sign in to access ${item.label}.`, onSuccess: () => navigate(item.path) })
       return

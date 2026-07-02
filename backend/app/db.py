@@ -296,6 +296,27 @@ class ApiKey(Base):
     last_used_at = Column(DateTime, nullable=True)
 
 
+class UserLegalAcceptance(Base):
+    """Versioned record of a user accepting a legal/compliance document
+    (Terms of Use, SEBI/NSE risk disclosure, execution authorization,
+    privacy policy). Append-only — a new row per (user, doc_type, version)
+    acceptance so history is preserved when a document version bumps.
+
+    Consumed by app.routers.legal for status/gating and by the audit
+    trail. See app.legal for the document registry."""
+    __tablename__ = "user_legal_acceptance"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=False, index=True)
+    doc_type = Column(String, nullable=False)      # terms_of_use | risk_disclosure | execution_authorization | privacy_policy
+    version = Column(Integer, nullable=False)       # version accepted
+    accepted_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    __table_args__ = (
+        Index("ix_legal_user_doc", "user_id", "doc_type"),
+    )
+
+
 # ── Reinforcement learning ──────────────────────────────────────
 class RLPolicy(Base):
     """Per-underlying contextual-bandit policy. `weights` is JSON-encoded.
@@ -880,6 +901,19 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_audit_ts ON audit_log (ts DESC)",
             "CREATE INDEX IF NOT EXISTS ix_audit_actor ON audit_log (actor_id, ts DESC)",
             "CREATE INDEX IF NOT EXISTS ix_audit_event ON audit_log (event_type, ts DESC)",
+            # Legal / compliance acceptance — versioned, append-only
+            """
+            CREATE TABLE IF NOT EXISTS user_legal_acceptance (
+                id VARCHAR PRIMARY KEY,
+                user_id VARCHAR NOT NULL,
+                doc_type VARCHAR NOT NULL,
+                version INTEGER NOT NULL,
+                accepted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                ip_address VARCHAR,
+                user_agent VARCHAR
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_legal_user_doc ON user_legal_acceptance (user_id, doc_type)",
             """
             CREATE TABLE IF NOT EXISTS option_intraday (
                 ts TIMESTAMP NOT NULL,

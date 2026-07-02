@@ -299,6 +299,11 @@ async def promote_strategy(
         tier = _tier(request)
         if tier != "algo":
             raise HTTPException(403, "LIVE mode requires `algo` tier.")
+        # Compliance gate — user must have accepted the platform legal docs
+        # AND the live-execution authorization before any real order fires.
+        from app.routers.legal import require_acceptance
+        from app.legal import PLATFORM_DOCS, LIVE_DOCS
+        await require_acceptance(owner, PLATFORM_DOCS + LIVE_DOCS)
 
     if row.status not in ("BACKTESTED", "PAPER_LIVE"):
         raise HTTPException(409,

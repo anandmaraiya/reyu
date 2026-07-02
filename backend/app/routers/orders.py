@@ -17,7 +17,7 @@ Validation we enforce locally before hitting Fyers:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from app.routers.user_auth import require_auth as _require_live_tier
 from pydantic import BaseModel, Field
 from typing import Literal
@@ -135,9 +135,10 @@ async def preview(symbol: str, qty: int | None = None):
 
 
 @router.post("")
-async def place(req: OrderRequest, user: dict = Depends(_require_live_tier)):
+async def place(req: OrderRequest, user: dict = Depends(_require_live_tier),
+                request: Request = None):
     # Free tier can still validate (dry-run), but live orders require a paid plan.
-    if not req.dry_run and user.get("tier") == "free":
+    if not req.dry_run and isinstance(user, dict) and user.get("tier") == "free":
         raise HTTPException(403, "Live order placement requires the Pro or Algo plan. Upgrade in Settings → Subscription.")
     info = await resolve(req.symbol)
     _validate(req, info)
@@ -173,6 +174,21 @@ async def place(req: OrderRequest, user: dict = Depends(_require_live_tier)):
         raise HTTPException(400, f"fyers rejected: {e}")
     if isinstance(resp, dict) and resp.get("s") == "error":
         raise HTTPException(400, resp.get("message", "order failed"))
+
+    # Compliance audit — durable record of every LIVE order sent to broker.
+    # (`user` may be a Depends marker when place() is called internally from
+    # place_batch; guard with isinstance so we only log real user context.)
+    from app.audit import record as _audit
+    _actor = user if isinstance(user, dict) else {}
+    await _audit(
+        event_type="ORDER_EXECUTE",
+        actor_id=_actor.get("sub"), actor_email=_actor.get("email"),
+        resource_type="order", resource_id=str(resp.get("id") if isinstance(resp, dict) else None),
+        action=f"{req.side} {req.qty} {req.symbol} @ {ORDER_TYPE.get(req.order_type, req.order_type)}",
+        meta={"symbol": req.symbol, "qty": req.qty, "side": req.side,
+              "order_type": req.order_type, "mode": "LIVE"},
+        request=request,
+    )
     return resp
 
 
