@@ -12,6 +12,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { track, Events } from '../telemetry'
+import PageHelp from '../components/PageHelp'
 
 type Preview = {
   kind: string | null
@@ -135,6 +136,7 @@ export default function Catalog() {
 
   return (
     <div style={S.page}>
+      <PageHelp pageId="catalog" />
       <h1 style={S.h1}>Strategy Catalog</h1>
       <p style={S.sub}>
         Discover strategies other traders have published. Copy any into your account as a

@@ -13,6 +13,7 @@ import { useState, type CSSProperties } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
+import PageHelp from '../components/PageHelp'
 
 type DailyFills = {
   days: number
@@ -332,6 +333,7 @@ export default function DataAdmin() {
   // ── Render ─────────────────────────────────────────────────────────
   return (
     <div style={S.page}>
+      <PageHelp pageId="admin-data" />
       <h1 style={S.title}>Dataset Capture — Admin</h1>
       <div style={S.subtitle}>Superadmin · {user.email}</div>
 

@@ -64,6 +64,8 @@ def _row_to_dict(row: Strategy) -> dict[str, Any]:
         "tags": json.loads(row.tags or "[]"),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "is_published": bool(row.is_published),
+        "copies_count": row.copies_count or 0,
     }
 
 

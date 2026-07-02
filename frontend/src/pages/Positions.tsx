@@ -6,6 +6,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import ConfirmDangerModal from '../components/ConfirmDangerModal'
 import PreflightPanel, { type PreflightResult } from '../components/PreflightPanel'
 import { track, Events } from '../telemetry'
+import PageHelp from '../components/PageHelp'
 import { downloadCSV } from '../utils/csv'
 import { useToast } from '../toast'
 import { useLiveTicks } from '../hooks/useLiveTicks'
@@ -176,6 +177,7 @@ export default function Positions() {
 
   return (
     <div className="page-shell">
+      <PageHelp pageId="positions" />
       <div className="row" style={{ alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
         <h3 style={{ margin: 0 }}>Active Positions by Ticker</h3>
         <span style={{ fontSize: 12, color: 'var(--muted)' }}>

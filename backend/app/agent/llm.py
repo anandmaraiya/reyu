@@ -111,6 +111,7 @@ async def chat_with_llm(
     chart: str | None = None
     chart_post: dict | None = None
     data: dict | None = None
+    total_tokens = 0
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SEC) as client:
         for iteration in range(MAX_TOOL_ITERATIONS):
@@ -135,6 +136,8 @@ async def chat_with_llm(
             choice = (body.get("choices") or [{}])[0]
             msg = choice.get("message") or {}
             tool_calls = msg.get("tool_calls") or []
+            usage = body.get("usage") or {}
+            total_tokens += int(usage.get("total_tokens") or usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
 
             # If the model wants to call tools, run them and loop
             if tool_calls:
@@ -171,7 +174,9 @@ async def chat_with_llm(
             return {
                 "text": msg.get("content") or "Sorry — no response.",
                 "chart": chart, "chart_post": chart_post, "data": data,
+                "tokens": total_tokens,
             }
 
     return {"text": "Reached tool-call iteration limit.",
-            "chart": chart, "chart_post": chart_post, "data": data}
+            "chart": chart, "chart_post": chart_post, "data": data,
+            "tokens": total_tokens}

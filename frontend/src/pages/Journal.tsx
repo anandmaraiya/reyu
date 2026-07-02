@@ -15,6 +15,7 @@ import { useState, useEffect, type CSSProperties } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { track, Events } from '../telemetry'
+import PageHelp from '../components/PageHelp'
 
 type Mode = '' | 'PAPER' | 'LIVE'
 type Range = 30 | 90 | 365
@@ -194,6 +195,7 @@ export default function Journal() {
 
   return (
     <div style={S.page}>
+      <PageHelp pageId="journal" />
       <h1 style={S.h1}>Journal</h1>
       <p style={S.sub}>
         Your P&L across paper and live trades. Auto-refreshes every 60s.

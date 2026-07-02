@@ -18,12 +18,13 @@ from __future__ import annotations
 import base64
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from app.agent import router as intent_router
 from app.agent.tools import call_tool, list_tools
 from app.agent import llm as agent_llm
+from app.agent import anthropic_llm as claude_llm
 from app.routers.user_auth import get_current_user
 from app.store import store
 
@@ -113,8 +114,42 @@ async def _eager_render_chart_post(chart_post: dict) -> str | None:
 
 
 @router.post("", response_model=ChatResponse)
-async def chat(req: ChatRequest, user: dict | None = Depends(get_current_user)):
-    user_id = user.get("sub", "anonymous") if user else "anonymous"
+async def chat(
+    req: ChatRequest,
+    request: Request,
+    user: dict | None = Depends(get_current_user),
+):
+    user_id = user.get("sub") if user else None
+    user_email = user.get("email") if user else None
+    tier = user.get("tier", "anonymous") if user else "anonymous"
+
+    # Client IP for anonymous rate-limit bucketing
+    xff = request.headers.get("x-forwarded-for")
+    ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else None)
+
+    # Enforce chat limits BEFORE we spend LLM tokens
+    from app.chat_limits import check_limits, record_usage
+    gate = await check_limits(
+        tier=tier, email=user_email,
+        user_id=user_id if user else None,
+        ip=ip,
+    )
+    if not gate["allowed"]:
+        return ChatResponse(
+            session_id=req.session_id or str(uuid.uuid4()),
+            text=gate["reason"],
+            ts=datetime.utcnow().isoformat(),
+            tool="rate_limited",
+            data={
+                "rate_limited": True,
+                "tier": gate["tier"],
+                "limit_type": gate["limit_type"],
+                "limit": gate["limit"],
+                "used": gate["used"],
+                "resets_at": gate["resets_at"],
+            },
+        )
+
     sid = req.session_id or str(uuid.uuid4())
     await _save_message(sid, "user", req.message)
 
@@ -124,16 +159,22 @@ async def chat(req: ChatRequest, user: dict | None = Depends(get_current_user)):
     else:
         history_msgs = req.history
 
-    if agent_llm.is_enabled():
-        history_dicts = [{"role": m.role, "content": m.content} for m in history_msgs]
-        result = await agent_llm.chat_with_llm(
-            req.message,
-            history=history_dicts,
-            user=user,
-            tier=user.get("tier", "anonymous") if user else "anonymous",
-            trial_days_left=user.get("trial_days_left") if user else None,
-            connected_brokers=user.get("connected_brokers") if user else None,
-        )
+    # Provider preference: Anthropic direct > OpenRouter > regex router
+    history_dicts = [{"role": m.role, "content": m.content} for m in history_msgs]
+    common_kwargs = dict(
+        history=history_dicts,
+        user=user,
+        tier=user.get("tier", "anonymous") if user else "anonymous",
+        trial_days_left=user.get("trial_days_left") if user else None,
+        connected_brokers=user.get("connected_brokers") if user else None,
+    )
+
+    if claude_llm.is_enabled():
+        result = await claude_llm.chat_with_claude(req.message, **common_kwargs)
+        tool_used = "claude"
+        tool_args_used = None
+    elif agent_llm.is_enabled():
+        result = await agent_llm.chat_with_llm(req.message, **common_kwargs)
         tool_used = "llm"
         tool_args_used = None
     else:
@@ -141,6 +182,13 @@ async def chat(req: ChatRequest, user: dict | None = Depends(get_current_user)):
         if "error" in decision:
             error_text = decision["error"]
             await _save_message(sid, "assistant", error_text)
+            # Still count this as a message consumed (prevents flooding
+            # the regex router with garbage). Zero tokens since no LLM.
+            await record_usage(
+                user_id=user_id if user else None,
+                ip=ip,
+                tokens=0,
+            )
             return ChatResponse(
                 session_id=sid,
                 text=error_text,
@@ -160,7 +208,15 @@ async def chat(req: ChatRequest, user: dict | None = Depends(get_current_user)):
 
     await _save_message(sid, "assistant", text)
 
-    if user:
+    # Record usage — 1 message + N tokens (0 if regex path)
+    tokens_used = int(result.get("tokens") or 0)
+    await record_usage(
+        user_id=user_id if user else None,
+        ip=ip,
+        tokens=tokens_used,
+    )
+
+    if user and user_id:
         await _register_session(user_id, sid)
 
     return ChatResponse(
@@ -234,3 +290,31 @@ async def delete_session(session_id: str, user: dict | None = Depends(get_curren
     await store.r.srem(key, session_id)
     await store.r.delete(_session_key(session_id))
     return {"ok": True}
+
+
+@router.get("/usage")
+async def chat_usage(
+    request: Request,
+    user: dict | None = Depends(get_current_user),
+):
+    """Return today's chat usage + tier limits + when the counter resets.
+    Frontend uses this to render the usage bar in the Chat header."""
+    from app.chat_limits import get_usage, TIER_LIMITS, _tier_key_from_email, _reset_at_iso
+
+    xff = request.headers.get("x-forwarded-for")
+    ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else None)
+
+    tier = user.get("tier", "anonymous") if user else "anonymous"
+    email = user.get("email") if user else None
+    tkey = _tier_key_from_email(email, tier)
+    lim = TIER_LIMITS[tkey]
+    usage = await get_usage(user["sub"] if user else None, ip)
+    return {
+        "tier": tkey,
+        "resets_at": _reset_at_iso(),
+        "usage": usage,
+        "limits": {
+            "messages": lim.daily_messages,      # -1 = unlimited
+            "tokens":   lim.daily_tokens,
+        },
+    }

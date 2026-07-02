@@ -6,6 +6,9 @@ import React, {
 } from 'react'
 import { api } from '../context/AuthContext'
 import { useAuth } from '../context/AuthContext'
+import { uuid } from '../utils/uuid'
+import ChatUsageMeter from '../components/ChatUsageMeter'
+import { useQueryClient } from '@tanstack/react-query'
 import { StrategyLifecycleStrip } from '../components/ResponseCard'
 import type { StrategyStage } from '../components/ResponseCard'
 import '../styles/chat.css'
@@ -114,24 +117,27 @@ export default function Chat() {
     ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'
   }, [input])
 
+  const qc = useQueryClient()
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim()
     if (!trimmed || loading) return
-    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', content: trimmed, ts: new Date().toISOString() }])
+    setMessages(prev => [...prev, { id: uuid(), role: 'user', content: trimmed, ts: new Date().toISOString() }])
     setInput('')
     setLoading(true)
     try {
       const resp = await api.post('/api/chat', { message: trimmed, session_id: sessionId || undefined })
       const d = resp.data
       if (d.session_id && d.session_id !== sessionId) { setSessionId(d.session_id); sessionStorage.setItem(SESSION_KEY, d.session_id) }
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: d.text || '', chart: d.chart ?? null, chart_inline: d.chart_inline ?? null, data: d.data ?? null, ts: d.ts || new Date().toISOString(), tool: d.tool ?? null }])
+      setMessages(prev => [...prev, { id: uuid(), role: 'assistant', content: d.text || '', chart: d.chart ?? null, chart_inline: d.chart_inline ?? null, data: d.data ?? null, ts: d.ts || new Date().toISOString(), tool: d.tool ?? null }])
+      // Refresh usage meter after each send (limits change every message)
+      qc.invalidateQueries({ queryKey: ['chat-usage'] })
     } catch (err: any) {
       const s = err?.response?.status
       if (!s || (s !== 401 && s !== 402 && s !== 403)) {
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: 'Something went wrong. Try again.', ts: new Date().toISOString() }])
+        setMessages(prev => [...prev, { id: uuid(), role: 'assistant', content: 'Something went wrong. Try again.', ts: new Date().toISOString() }])
       }
     } finally { setLoading(false); inputRef.current?.focus() }
-  }, [loading, sessionId])
+  }, [loading, sessionId, qc])
 
   function pinMessage(msg: Message, query: string) {
     setTray(prev => prev.find(t => t.id === msg.id) ? prev : [...prev, { id: msg.id, query: query.slice(0, 40), summary: msg.content.slice(0, 60) }])
@@ -151,6 +157,16 @@ export default function Chat() {
 
   return (
     <div className="agent-page">
+      <div style={{
+        display: 'flex',
+        justifyContent: 'flex-end',
+        padding: '8px 20px 0',
+        position: 'sticky' as const,
+        top: 0,
+        zIndex: 5,
+      }}>
+        <ChatUsageMeter />
+      </div>
       {isEmpty ? (
         <div className="chat-empty">
           <div className="chat-empty-logo">R</div>

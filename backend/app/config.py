@@ -29,8 +29,14 @@ class Settings(BaseSettings):
     razorpay_plan_algo_yearly: str = ""   # Razorpay plan ID for Algo yearly
     razorpay_callback_url: str = "http://localhost:5173/subscription"
 
-    # OpenRouter LLM (used by the chat agent when set; otherwise the regex
-    # router takes over). Get a key at https://openrouter.ai/keys
+    # LLM providers — preference order at call time:
+    #   1. ANTHROPIC_API_KEY (direct Claude API, cleanest + cheapest)
+    #   2. OPENROUTER_API_KEY (routes to Claude/GPT/etc.)
+    #   3. Regex intent router (no LLM required)
+    # Get a Claude key at https://console.anthropic.com/settings/keys
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-opus-4-7"
+    # OpenRouter — fallback / multi-provider gateway
     openrouter_api_key: str = ""
     openrouter_model: str = "anthropic/claude-3.5-haiku"
     openrouter_referer: str = "https://reyu.ai"      # OpenRouter requires HTTP-Referer

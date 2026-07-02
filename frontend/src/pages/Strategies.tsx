@@ -19,6 +19,8 @@ type Strategy = {
   tags: string[]
   spec: any
   updated_at: string
+  is_published?: boolean
+  copies_count?: number
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -86,6 +88,16 @@ export default function Strategies() {
       qc.invalidateQueries({ queryKey: ['strategies'] })
     },
     onError: (e: any) => toast.push('error', e?.response?.data?.detail || 'Archive failed'),
+  })
+
+  const togglePublish = useMutation({
+    mutationFn: ({ id, published }: { id: string; published: boolean }) =>
+      api.post(`/api/strategies/${id}/publish`, { published }),
+    onSuccess: (_, vars) => {
+      toast.push('success', vars.published ? 'Published to catalog' : 'Removed from catalog')
+      qc.invalidateQueries({ queryKey: ['strategies'] })
+    },
+    onError: (e: any) => toast.push('error', e?.response?.data?.detail || 'Publish failed'),
   })
 
   const items = data?.items || []
@@ -188,6 +200,7 @@ export default function Strategies() {
                 s={s}
                 onClick={() => nav(`/strategies/${s.id}`)}
                 onArchive={() => archive.mutate(s.id)}
+                onTogglePublish={() => togglePublish.mutate({ id: s.id, published: !s.is_published })}
               />
             ))}
           </div>
@@ -201,10 +214,12 @@ function StrategyCard({
   s,
   onClick,
   onArchive,
+  onTogglePublish,
 }: {
   s: Strategy
   onClick: () => void
   onArchive: () => void
+  onTogglePublish: () => void
 }) {
   const universe = (s.spec?.universe || [])[0] || '—'
   const tp = s.spec?.exit_rules?.tp_pct
@@ -327,24 +342,60 @@ function StrategyCard({
             </span>
           ))}
         </span>
-        {s.status !== 'ARCHIVED' && s.status !== 'LIVE' && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              if (confirm(`Archive "${s.name}"?`)) onArchive()
-            }}
-            style={{
-              fontSize: 11,
-              color: 'var(--muted)',
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              padding: 0,
-            }}
-          >
-            archive
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {s.is_published && (
+            <span
+              title={`${s.copies_count ?? 0} copies`}
+              style={{
+                background: 'var(--brand-primary)',
+                color: '#fff',
+                padding: '1px 8px',
+                borderRadius: 8,
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.05em',
+              }}
+            >
+              PUBLISHED · {s.copies_count ?? 0}
+            </span>
+          )}
+          {s.status !== 'ARCHIVED' && s.status !== 'LIVE' && (
+            <>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onTogglePublish()
+                }}
+                style={{
+                  fontSize: 11,
+                  color: s.is_published ? 'var(--signal)' : 'var(--brand-primary)',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              >
+                {s.is_published ? 'unpublish' : 'publish'}
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (confirm(`Archive "${s.name}"?`)) onArchive()
+                }}
+                style={{
+                  fontSize: 11,
+                  color: 'var(--muted)',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              >
+                archive
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   )

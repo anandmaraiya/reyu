@@ -35,7 +35,7 @@ _PUBLIC_PATHS = [
     re.compile(r"^/api/user/reset-password$"),
     re.compile(r"^/api/stream/ws/"),       # WebSocket
     re.compile(r"^/ws/"),                  # WebSocket (without /api prefix)
-    re.compile(r"^/api/chat"),             # chat endpoint (auth handled per-route)
+    re.compile(r"^/api/chat"),             # chat endpoint (auth handled per-route + rate limits per tier)
     re.compile(r"^/api/chart/"),           # chart PNGs (embed in chat / Telegram / Discord)
     re.compile(r"^/api/telegram/webhook$"), # Telegram → us (no auth header from TG)
     re.compile(r"^/api/system/status$"),   # health probe used by sidebar

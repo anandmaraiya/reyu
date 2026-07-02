@@ -157,6 +157,18 @@ export function Sidebar({ mobileOpen, onMobileClose }: { mobileOpen?: boolean; o
                       ? `Trial · ${trialDaysLeft}d left`
                       : tier.charAt(0).toUpperCase() + tier.slice(1)
                     }
+                    {user.trader_type === 'HNI' && (
+                      <span style={{
+                        marginLeft: 6,
+                        padding: '1px 6px',
+                        borderRadius: 'var(--radius-full)',
+                        background: 'var(--accent-primary)',
+                        color: '#fff',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        letterSpacing: '0.06em',
+                      }}>HNI</span>
+                    )}
                   </span>
                 </div>
               </div>

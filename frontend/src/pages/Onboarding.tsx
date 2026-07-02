@@ -19,6 +19,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { track, Events } from '../telemetry'
+import PageHelp from '../components/PageHelp'
 
 type TraderType = 'RETAIL' | 'HNI'
 type Step = 1 | 2 | 3 | 4
@@ -225,6 +226,7 @@ export default function Onboarding() {
   return (
     <div style={S.page}>
       <div style={S.shell}>
+        <PageHelp pageId="onboarding" />
         <div style={S.logo}>Reyu</div>
 
         {/* Progress bar */}
@@ -356,11 +358,14 @@ export default function Onboarding() {
           {step === 4 && (
             <>
               <div style={S.stepLabel}>Step 4 of 4</div>
-              <h1 style={S.title}>You're ready</h1>
+              <h1 style={S.title}>
+                {traderType === 'HNI' ? "You're set up with priority access" : "You're ready"}
+              </h1>
               <p style={S.hint}>
-                Tomorrow at 09:25 IST, the regime router opens its next paper trade
-                on your account. You'll see the decision, entry prices, and live P&L
-                on the dashboard. No action needed from you overnight.
+                {traderType === 'HNI'
+                  ? `Your HNI account has elevated position limits, priority Fyers pooling during peak load, and access to our concierge onboarding team. Tomorrow at 09:25 IST, the regime router opens its next paper trade on your account. Any questions during the first week, reply to your welcome email — a real human will get back to you within 4 hours.`
+                  : `Tomorrow at 09:25 IST, the regime router opens its next paper trade on your account. You'll see the decision, entry prices, and live P&L on the dashboard. No action needed from you overnight.`
+                }
               </p>
 
               <div style={{

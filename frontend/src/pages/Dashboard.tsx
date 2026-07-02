@@ -12,6 +12,7 @@ import IVSmile from '../components/IVSmile'
 import KeyLevelsStrip from '../components/KeyLevelsStrip'
 import RecommendationPanel from '../components/RecommendationPanel'
 import ChartsIntelligenceBar from '../components/ChartsIntelligenceBar'
+import PageHelp from '../components/PageHelp'
 import FilterBar from '../components/FilterBar'
 import OITimeSeries from '../components/OITimeSeries'
 import OIBuildup from '../components/OIBuildup'
@@ -194,6 +195,7 @@ export default function Dashboard() {
 
   return (
     <div className="page-shell">
+      <PageHelp pageId="charts" />
       <div className="page-toolbar">
         <FilterBar
           title=""

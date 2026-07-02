@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth, api } from '../context/AuthContext'
 import ConfirmDangerModal from '../components/ConfirmDangerModal'
+import PageHelp from '../components/PageHelp'
 import { track, Events } from '../telemetry'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -285,6 +286,7 @@ export default function Brokers() {
 
   return (
     <div className="brokers-page">
+      <PageHelp pageId="brokers" />
       {/* Toast */}
       {toast && (
         <div className={`sub-toast ${toast.type === 'ok' ? 'sub-toast-ok' : 'sub-toast-err'}`}>
