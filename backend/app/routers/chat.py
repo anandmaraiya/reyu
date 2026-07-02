@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import uuid
 from datetime import datetime
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
@@ -153,6 +154,12 @@ async def chat(
     sid = req.session_id or str(uuid.uuid4())
     await _save_message(sid, "user", req.message)
 
+    # Load the plan for this session — injected into the LLM system prompt
+    # so multi-turn conversations build on prior context.
+    from app.chat_plan import get_plan, summarise_plan_for_prompt
+    plan = await get_plan(sid)
+    plan_hint = summarise_plan_for_prompt(plan)
+
     if req.session_id:
         redis_history = await _get_history(sid, limit=20)
         history_msgs = [ChatMessage(role=m["role"], content=m["content"]) for m in redis_history]
@@ -167,6 +174,7 @@ async def chat(
         tier=user.get("tier", "anonymous") if user else "anonymous",
         trial_days_left=user.get("trial_days_left") if user else None,
         connected_brokers=user.get("connected_brokers") if user else None,
+        plan_hint=plan_hint,
     )
 
     if claude_llm.is_enabled():
@@ -290,6 +298,45 @@ async def delete_session(session_id: str, user: dict | None = Depends(get_curren
     await store.r.srem(key, session_id)
     await store.r.delete(_session_key(session_id))
     return {"ok": True}
+
+
+@router.get("/plan/{session_id}")
+async def get_session_plan(session_id: str):
+    """Return the running plan state for a chat session.
+    Anonymous — plan is stored per-session, not per-user."""
+    from app.chat_plan import get_plan
+    return await get_plan(session_id)
+
+
+class PlanPatch(BaseModel):
+    goal: Optional[str] = None
+    underlying: Optional[str] = None
+    bias: Optional[str] = None
+    brackets: Optional[dict] = None
+    strategy_draft: Optional[dict] = None
+    next_step: Optional[str] = None
+    add_decision: Optional[dict] = None      # {choice, why}
+
+
+@router.patch("/plan/{session_id}")
+async def patch_session_plan(session_id: str, req: PlanPatch):
+    """Manually update the plan. Also called by the LLM via `update_chat_plan` tool."""
+    from app.chat_plan import update_plan
+    patch = {k: v for k, v in req.model_dump().items()
+             if v is not None and k != "add_decision"}
+    if req.add_decision:
+        patch["decisions"] = [{
+            "ts": datetime.utcnow().isoformat(),
+            **req.add_decision,
+        }]
+    return await update_plan(session_id, patch)
+
+
+@router.delete("/plan/{session_id}")
+async def clear_session_plan(session_id: str):
+    from app.chat_plan import clear_plan
+    await clear_plan(session_id)
+    return {"ok": True, "message": "Plan cleared. Next message starts fresh."}
 
 
 @router.get("/usage")

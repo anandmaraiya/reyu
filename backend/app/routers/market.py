@@ -37,29 +37,45 @@ async def _get_redis():
 
 
 async def _fetch_and_cache() -> list[dict]:
-    """Try to fetch live quotes from Fyers and persist to Redis."""
+    """Try to fetch live quotes from Fyers and persist to Redis.
+
+    Uses the module-level Fyers client (`app.fyers.client`) directly — the
+    system-shared token in Redis, no per-user broker instance. Same
+    pattern the scheduler + snapshot pipeline use.
+    """
+    from app.fyers import client as fy
     try:
-        from app.brokers.fyers import FyersBroker
-        fy = FyersBroker(user_id="system")
-        quotes = await fy.get_quotes(_SYMBOLS)
-        if quotes and not await fy.is_demo():
-            ticks = [
-                {
-                    "symbol": q.symbol,
-                    "label": _DEMO.get(q.symbol, {}).get("label", q.symbol.split(":")[1]),
-                    "ltp": round(q.ltp, 2),
-                    "close": round(q.close, 2),
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-                for q in quotes
-            ]
+        if await fy.is_demo():
+            return []
+        q = await fy.quotes(_SYMBOLS)
+        # Fyers quotes shape: {"d": [{"n": "NSE:NIFTY50-INDEX", "v": {...}}, ...]}
+        rows = q.get("d") if isinstance(q, dict) else None
+        if not rows:
+            return []
+        ticks: list[dict] = []
+        for row in rows:
+            sym = row.get("n") or ""
+            v = row.get("v") or {}
+            ltp = float(v.get("lp") or 0)
+            prev_close = float(v.get("prev_close_price") or 0)
+            if not sym or not ltp:
+                continue
+            ticks.append({
+                "symbol": sym,
+                "label": _DEMO.get(sym, {}).get("label", sym.split(":")[1] if ":" in sym else sym),
+                "ltp": round(ltp, 2),
+                "close": round(prev_close, 2),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
+        if ticks:
             r = await _get_redis()
             if r:
-                await r.set(REDIS_KEY, json.dumps(ticks), ex=120)  # 2 min TTL
-            return ticks
-    except Exception:
-        pass
-    return []
+                await r.set(REDIS_KEY, json.dumps(ticks), ex=60)   # 60s TTL — market moves fast
+        return ticks
+    except Exception as e:
+        import logging
+        logging.getLogger("reyu.market").warning("live tick fetch failed: %s", e)
+        return []
 
 
 def _demo_ticks() -> list[dict]:

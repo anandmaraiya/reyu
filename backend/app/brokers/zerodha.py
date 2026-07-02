@@ -5,21 +5,27 @@ Docs: https://kite.trade/docs/connect/v3/
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
+
+from fastapi.concurrency import run_in_threadpool
+
 from app.brokers.base import (
     BrokerClient, Quote, OptionChain, OptionLeg, Position,
     Order, OrderRequest, AccountProfile, HistoryBar,
 )
+from app.config import settings
+
+log = logging.getLogger("reyu.zerodha")
 
 
 class ZerodhaBroker(BrokerClient):
     broker_id   = "zerodha"
     broker_name = "Zerodha"
 
-    KITE_API_KEY    = ""   # Set via env ZERODHA_API_KEY
-    KITE_API_SECRET = ""   # Set via env ZERODHA_API_SECRET
-
     def __init__(self, access_token: str | None = None):
+        self.api_key = settings.zerodha_api_key
+        self.api_secret = settings.zerodha_api_secret
         self._token = access_token
         self._kite = None
         if access_token:
@@ -28,25 +34,37 @@ class ZerodhaBroker(BrokerClient):
     def _init_sdk(self, token: str):
         try:
             from kiteconnect import KiteConnect
-            self._kite = KiteConnect(api_key=self.KITE_API_KEY)
+            self._kite = KiteConnect(api_key=self.api_key)
             self._kite.set_access_token(token)
         except ImportError:
-            pass  # kiteconnect not installed
+            log.warning("kiteconnect not installed — pip install kiteconnect")
+        except Exception as e:
+            log.warning("KiteConnect init failed: %s", e)
 
     def oauth_url(self, redirect_uri: str, state: str = "") -> str:
-        return (
-            f"https://kite.zerodha.com/connect/login"
-            f"?v=3&api_key={self.KITE_API_KEY}"
-        )
+        # Kite ignores redirect_uri here — it's configured in the dashboard.
+        # State is optional; we bundle it as a query param Kite carries through.
+        base = f"https://kite.zerodha.com/connect/login?v=3&api_key={self.api_key}"
+        return f"{base}&redirect_params=state%3D{state}" if state else base
 
     async def exchange_token(self, code: str, redirect_uri: str) -> dict:
-        if not self._kite:
-            raise RuntimeError("kiteconnect not installed — pip install kiteconnect")
-        data = self._kite.generate_session(code, api_secret=self.KITE_API_SECRET)
-        token = data["access_token"]
-        self._kite.set_access_token(token)
-        self._token = token
-        return {"access_token": token, "refresh_token": None, "expires_at": None}
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError("ZERODHA_API_KEY + ZERODHA_API_SECRET required")
+        try:
+            from kiteconnect import KiteConnect
+            kite = KiteConnect(api_key=self.api_key)
+        except ImportError:
+            raise RuntimeError("kiteconnect not installed on server")
+        data = await run_in_threadpool(kite.generate_session, code, api_secret=self.api_secret)
+        token = data.get("access_token", "")
+        if token:
+            self._token = token
+            self._init_sdk(token)
+        return {
+            "access_token": token,
+            "refresh_token": data.get("refresh_token"),
+            "expires_at": "next 06:00 IST",
+        }
 
     async def refresh_token(self, refresh_token: str) -> dict:
         raise NotImplementedError("Zerodha tokens expire daily — re-auth required")
@@ -58,7 +76,11 @@ class ZerodhaBroker(BrokerClient):
     async def get_quotes(self, symbols: list[str]) -> list[Quote]:
         if not self._kite:
             return []
-        data = self._kite.quote(symbols)
+        try:
+            data = await run_in_threadpool(self._kite.quote, symbols)
+        except Exception as e:
+            log.warning("kite.quote failed: %s", e)
+            return []
         return [
             Quote(
                 symbol=sym,
@@ -82,7 +104,14 @@ class ZerodhaBroker(BrokerClient):
         if not self._kite:
             return []
         interval_map = {"1": "minute", "5": "5minute", "15": "15minute", "D": "day"}
-        data = self._kite.historical_data(symbol, from_dt, to_dt, interval_map.get(resolution, "minute"))
+        try:
+            data = await run_in_threadpool(
+                self._kite.historical_data, symbol, from_dt, to_dt,
+                interval_map.get(resolution, "minute"),
+            )
+        except Exception as e:
+            log.warning("kite.historical_data failed: %s", e)
+            return []
         return [
             HistoryBar(ts=d["date"], open=d["open"], high=d["high"], low=d["low"],
                        close=d["close"], volume=d.get("volume", 0), oi=d.get("oi", 0))

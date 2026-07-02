@@ -71,6 +71,7 @@ async def chat_with_llm(
     spot_banknifty: float | None = None,
     vix: float | None = None,
     pcr: float | None = None,
+    plan_hint: str | None = None,
 ) -> dict:
     """Run an agentic loop. Returns the same shape as TOOLS handlers:
        { text, chart?, chart_post?, data? }
@@ -95,6 +96,8 @@ async def chat_with_llm(
         vix=vix,
         pcr=pcr,
     )
+    if plan_hint:
+        system_prompt = f"{system_prompt}\n\n{plan_hint}"
 
     # Build message list: system → history → current user turn
     messages: list[dict] = [{"role": "system", "content": system_prompt}]

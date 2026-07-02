@@ -99,6 +99,82 @@ def password_reset_html(reset_url: str, valid_minutes: int = 30) -> str:
     """
 
 
+def _wrap(inner_html: str) -> str:
+    """Shared shell — header, brand color, footer. All drip templates use this."""
+    return f"""
+    <div style="font-family:-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#1a1a1a">
+      {inner_html}
+      <p style="font-size:12px;color:#aaa;margin-top:32px;border-top:1px solid #eee;padding-top:12px">
+        Reyu — AI Options Copilot · <a href="https://reyu.ai" style="color:#888">reyu.ai</a><br/>
+        You're getting this because you signed up. Reply to unsubscribe.
+      </p>
+    </div>
+    """
+
+
+def drip_day1_html(display_name: str, dashboard_url: str) -> str:
+    """24h post-signup — nudge on connecting a broker."""
+    return _wrap(f"""
+      <h1 style="font-size:20px;margin:0 0 12px 0">Ready to see live signals, {display_name}?</h1>
+      <p style="line-height:1.5;color:#555">
+        Yesterday you signed up for Reyu. To unlock live option chains,
+        regime-router paper trades, and personalised AI answers,
+        connect your Fyers account. It takes about 45 seconds.
+      </p>
+      <p style="margin:24px 0">
+        <a href="{dashboard_url}/brokers" style="background:#059669;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:600;display:inline-block">
+          Connect Fyers
+        </a>
+      </p>
+      <p style="font-size:13px;color:#888;line-height:1.5">
+        Don't have a Fyers account? Zerodha + Upstox support ships next month.
+      </p>
+    """)
+
+
+def drip_day3_html(display_name: str, dashboard_url: str) -> str:
+    """3-day nudge — try a backtest."""
+    return _wrap(f"""
+      <h1 style="font-size:20px;margin:0 0 12px 0">Test a strategy in 30 seconds</h1>
+      <p style="line-height:1.5;color:#555">
+        {display_name}, most Reyu users find their edge in the backtest.
+        The regime router hit <strong>+975% ROI with 9.5% drawdown</strong>
+        on 2019-2024 NIFTY. See the exact trades:
+      </p>
+      <p style="margin:24px 0">
+        <a href="{dashboard_url}/backtest" style="background:#059669;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:600;display:inline-block">
+          Run a backtest
+        </a>
+      </p>
+      <p style="font-size:12px;color:#888;line-height:1.5">
+        Pro tip: run 2019, 2020, 2022 windows separately to see how the
+        strategy handles very different regimes.
+      </p>
+    """)
+
+
+def drip_day7_html(display_name: str, dashboard_url: str) -> str:
+    """1-week retention — highlight the paper-live platform strategy."""
+    return _wrap(f"""
+      <h1 style="font-size:20px;margin:0 0 12px 0">A week in — here's what's running for you</h1>
+      <p style="line-height:1.5;color:#555">
+        The Reyu regime router opened its next paper trade at 9:25 IST today.
+        It picks between long CE, long PE, and iron condor based on
+        yesterday's PCR + 3-day momentum, then hard-closes at 15:20 IST.
+        No overnight risk.
+      </p>
+      <p style="line-height:1.5;color:#555">
+        Watch it on the Journal page. When you're ready, promote it to
+        live with the Algo plan.
+      </p>
+      <p style="margin:24px 0">
+        <a href="{dashboard_url}/journal" style="background:#059669;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:600;display:inline-block">
+          Open my journal
+        </a>
+      </p>
+    """)
+
+
 def welcome_html(display_name: str, dashboard_url: str) -> str:
     return f"""
     <div style="font-family:-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#1a1a1a">

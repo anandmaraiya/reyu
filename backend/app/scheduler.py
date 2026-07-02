@@ -418,6 +418,62 @@ async def regime_router_close_job() -> None:
         log.exception("regime-router close failed: %s", e)
 
 
+async def onboarding_drip_job() -> None:
+    """Runs daily 03:00 UTC (~08:30 IST). Sends drip emails to users at
+    day 1, 3, 7 post-signup. Idempotent — never sends the same template
+    twice per user."""
+    from datetime import datetime, timedelta
+    from sqlalchemy import select, text
+    from app.db import SessionLocal, User
+    from app.notify_email import send_email, drip_day1_html, drip_day3_html, drip_day7_html
+    from app.config import settings
+
+    templates = [
+        (1, "drip_day1", drip_day1_html, "See live signals — connect your broker"),
+        (3, "drip_day3", drip_day3_html, "Test a strategy in 30 seconds"),
+        (7, "drip_day7", drip_day7_html, "A week in — here's what's running for you"),
+    ]
+    now = datetime.utcnow()
+    sent_counts = {}
+    async with SessionLocal() as s:
+        for day_offset, template_name, template_fn, subject in templates:
+            window_start = now - timedelta(days=day_offset, hours=12)
+            window_end = now - timedelta(days=day_offset - 1)
+            # Users signed up within the target window who haven't received this template
+            q = text("""
+                SELECT u.id, u.email, u.display_name
+                FROM users u
+                LEFT JOIN user_email_events e
+                  ON e.user_id = u.id AND e.template = :template
+                WHERE u.created_at BETWEEN :start AND :end
+                  AND u.is_active = TRUE
+                  AND e.user_id IS NULL
+            """)
+            rows = (await s.execute(q, {
+                "template": template_name,
+                "start": window_start,
+                "end": window_end,
+            })).fetchall()
+
+            for row in rows:
+                display = row.display_name or row.email.split("@")[0]
+                try:
+                    await send_email(
+                        to=row.email,
+                        subject=subject,
+                        html=template_fn(display, settings.frontend_url),
+                    )
+                    await s.execute(text(
+                        "INSERT INTO user_email_events (user_id, template) "
+                        "VALUES (:uid, :tpl) ON CONFLICT DO NOTHING"
+                    ), {"uid": row.id, "tpl": template_name})
+                except Exception as e:
+                    log.exception("drip %s failed for %s: %s", template_name, row.email, e)
+            sent_counts[template_name] = len(rows)
+        await s.commit()
+    log.info("onboarding drip: %s", sent_counts)
+
+
 async def dataset_health_check() -> None:
     """Daily 07:30 IST log — what did we capture yesterday across each table.
 
@@ -484,6 +540,11 @@ def start() -> None:
     scheduler.add_job(dataset_health_check,
                       CronTrigger(hour=2, minute=0),
                       id="dataset_health", max_instances=1, coalesce=True)
+    # Onboarding drip emails — 08:30 IST = 03:00 UTC daily. Sends day 1,
+    # 3, 7 nudges to eligible users. Idempotent via user_email_events.
+    scheduler.add_job(onboarding_drip_job,
+                      CronTrigger(hour=3, minute=0),
+                      id="onboarding_drip", max_instances=1, coalesce=True)
     # Regime-router morning decision — 09:25 IST = 03:55 UTC, Mon-Fri.
     # 5 min before market open so legs price off the most recent snapshot.
     scheduler.add_job(regime_router_morning_job,

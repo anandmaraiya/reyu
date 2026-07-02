@@ -8,6 +8,7 @@ import { api } from '../context/AuthContext'
 import { useAuth } from '../context/AuthContext'
 import { uuid } from '../utils/uuid'
 import ChatUsageMeter from '../components/ChatUsageMeter'
+import ChatPlanPanel from '../components/ChatPlanPanel'
 import { useQueryClient } from '@tanstack/react-query'
 import { StrategyLifecycleStrip } from '../components/ResponseCard'
 import type { StrategyStage } from '../components/ResponseCard'
@@ -129,8 +130,9 @@ export default function Chat() {
       const d = resp.data
       if (d.session_id && d.session_id !== sessionId) { setSessionId(d.session_id); sessionStorage.setItem(SESSION_KEY, d.session_id) }
       setMessages(prev => [...prev, { id: uuid(), role: 'assistant', content: d.text || '', chart: d.chart ?? null, chart_inline: d.chart_inline ?? null, data: d.data ?? null, ts: d.ts || new Date().toISOString(), tool: d.tool ?? null }])
-      // Refresh usage meter after each send (limits change every message)
+      // Refresh usage meter + plan panel after each send
       qc.invalidateQueries({ queryKey: ['chat-usage'] })
+      qc.invalidateQueries({ queryKey: ['chat-plan'] })
     } catch (err: any) {
       const s = err?.response?.status
       if (!s || (s !== 401 && s !== 402 && s !== 403)) {
@@ -160,11 +162,14 @@ export default function Chat() {
       <div style={{
         display: 'flex',
         justifyContent: 'flex-end',
+        alignItems: 'flex-start',
+        gap: 10,
         padding: '8px 20px 0',
         position: 'sticky' as const,
         top: 0,
         zIndex: 5,
       }}>
+        <ChatPlanPanel sessionId={sessionId} />
         <ChatUsageMeter />
       </div>
       {isEmpty ? (

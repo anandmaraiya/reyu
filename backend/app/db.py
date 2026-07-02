@@ -835,6 +835,16 @@ async def init_db() -> None:
             "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS copies_count INTEGER DEFAULT 0",
             "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS copied_from_id VARCHAR",
             "CREATE INDEX IF NOT EXISTS ix_strategies_published ON strategies (is_published, published_at DESC) WHERE is_published = TRUE",
+            # Drip email idempotency — one row per (user, template) so we
+            # never spam the same drip twice.
+            """
+            CREATE TABLE IF NOT EXISTS user_email_events (
+                user_id VARCHAR NOT NULL,
+                template VARCHAR NOT NULL,
+                sent_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (user_id, template)
+            )
+            """,
             # Audit log — 7-year append-only compliance trail
             """
             CREATE TABLE IF NOT EXISTS audit_log (

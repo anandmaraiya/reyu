@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     posthog_api_key: str = ""
     posthog_host: str = "https://us.i.posthog.com"
 
+    # Zerodha Kite Connect — https://developers.kite.trade
+    # Kite uses per-day access tokens (~06:00 IST expiry). Users re-auth
+    # daily; scheduler + auto-backfill patterns from Fyers apply.
+    zerodha_api_key: str = ""
+    zerodha_api_secret: str = ""
+    zerodha_redirect_uri: str = "http://localhost:8000/api/brokers/zerodha/callback"
+
     class Config:
         env_file = ".env"
         case_sensitive = False

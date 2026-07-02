@@ -6,6 +6,13 @@ import App from './App'
 import ScrollToTop from './ScrollToTop'
 import { ToastProvider } from './toast'
 import { initTelemetry } from './telemetry'
+import { uuid } from './utils/uuid'
+
+// Polyfill crypto.randomUUID for non-secure contexts (HTTP + public IP).
+// Without this, third-party libs that reach for crypto.randomUUID crash.
+if (typeof window !== 'undefined' && window.crypto && !window.crypto.randomUUID) {
+  ;(window.crypto as any).randomUUID = () => uuid()
+}
 
 // Init PostHog before the first render so page-view auto-capture starts on route zero.
 initTelemetry()

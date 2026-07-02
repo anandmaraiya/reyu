@@ -70,6 +70,7 @@ async def chat_with_claude(
     spot_banknifty: float | None = None,
     vix: float | None = None,
     pcr: float | None = None,
+    plan_hint: str | None = None,
 ) -> dict:
     """Same interface as llm.chat_with_llm — swappable at the caller."""
     if not is_enabled():
@@ -90,6 +91,8 @@ async def chat_with_claude(
         vix=vix,
         pcr=pcr,
     )
+    if plan_hint:
+        system_prompt = f"{system_prompt}\n\n{plan_hint}"
 
     # Anthropic messages array — system is separate, only user/assistant here.
     # Content blocks per message: [{"type": "text", "text": "..."}] for text,
