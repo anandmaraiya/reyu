@@ -108,11 +108,67 @@ const S = {
   } as CSSProperties,
 }
 
+type ResultRun = {
+  run_id: string
+  mode: string
+  status: string
+  period_start: string | null
+  period_end: string | null
+  metrics: { total_trades: number | null; win_rate: number | null; roi_pct: number | null;
+             max_drawdown_pct: number | null; profit_factor: number | null; sharpe: number | null }
+}
+
+/** On-platform run results for a published strategy — disclaimed facts. */
+function ResultsPanel({ strategyId }: { strategyId: string }) {
+  const { data, isLoading } = useQuery<{ runs: ResultRun[]; disclaimer: string }>({
+    queryKey: ['catalog-results', strategyId],
+    queryFn: async () => (await api.get(`/api/catalog/${strategyId}/results`)).data,
+  })
+  const pnl = (n: number | null) =>
+    n == null ? 'var(--text-muted)' : n > 0 ? '#2da14b' : n < 0 ? '#e05252' : 'inherit'
+
+  if (isLoading) return <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: 8 }}>Loading results…</div>
+  const runs = data?.runs || []
+  if (!runs.length) return <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: 8 }}>No completed runs yet — the creator hasn't backtested or forward-tested this on-platform.</div>
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+        <thead>
+          <tr>
+            {['Mode', 'Period', 'Trades', 'ROI %', 'Max DD %', 'Win rate'].map(h => (
+              <th key={h} style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', borderBottom: '1px solid var(--border-default)' }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {runs.slice(0, 5).map(r => (
+            <tr key={r.run_id}>
+              <td style={{ padding: '5px 6px', fontWeight: 600 }}>{r.mode}{r.status !== 'COMPLETED' ? ` (${r.status.toLowerCase()})` : ''}</td>
+              <td style={{ padding: '5px 6px', fontFamily: 'var(--font-mono)', fontSize: 10.5 }}>
+                {r.period_start ? `${r.period_start} → ${r.period_end}` : '—'}
+              </td>
+              <td style={{ padding: '5px 6px' }}>{r.metrics.total_trades ?? '—'}</td>
+              <td style={{ padding: '5px 6px', fontFamily: 'var(--font-mono)', color: pnl(r.metrics.roi_pct) }}>{r.metrics.roi_pct ?? '—'}</td>
+              <td style={{ padding: '5px 6px', fontFamily: 'var(--font-mono)' }}>{r.metrics.max_drawdown_pct ?? '—'}</td>
+              <td style={{ padding: '5px 6px' }}>{r.metrics.win_rate != null ? `${(r.metrics.win_rate * 100).toFixed(0)}%` : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '8px 0 0', lineHeight: 1.5 }}>
+        {data?.disclaimer}
+      </p>
+    </div>
+  )
+}
+
 export default function Catalog() {
   const { user, openGate } = useAuth()
   const nav = useNavigate()
   const qc = useQueryClient()
   const [sort, setSort] = useState<'recent' | 'popular'>('recent')
+  const [resultsOpen, setResultsOpen] = useState<string | null>(null)
 
   const q = useQuery<{ strategies: CatalogItem[] }>({
     queryKey: ['catalog', sort],
@@ -244,6 +300,18 @@ export default function Catalog() {
                 )}
               </div>
             )}
+
+            <button
+              onClick={() => setResultsOpen(o => o === s.id ? null : s.id)}
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                fontSize: 12, fontWeight: 600, color: 'var(--accent-text, #4a9fda)',
+                textAlign: 'left', padding: 0,
+              }}
+            >
+              {resultsOpen === s.id ? '▾ Hide results' : '▸ View results'}
+            </button>
+            {resultsOpen === s.id && <ResultsPanel strategyId={s.id} />}
 
             <div style={S.footer}>
               <span style={S.copies}>

@@ -146,6 +146,66 @@ async def list_published(
     }
 
 
+@router.get("/{strategy_id}/results")
+async def published_results(strategy_id: str):
+    """Public: on-platform run results for a PUBLISHED strategy.
+
+    Facts about what actually happened here — completed backtest and
+    paper runs with their metrics and (trimmed) equity curves. Served
+    with an explicit disclaimer; never a ranking or a claim. Only
+    published strategies expose results; private ones 404."""
+    from app.db import StrategyRun
+
+    async with SessionLocal() as s:
+        source = (await s.execute(
+            select(Strategy)
+            .where(Strategy.id == strategy_id, Strategy.is_published == True)
+            .order_by(desc(Strategy.version)).limit(1)
+        )).scalar_one_or_none()
+        if not source:
+            raise HTTPException(404, "Strategy not found or not published")
+
+        runs = (await s.execute(
+            select(StrategyRun).where(
+                StrategyRun.strategy_id == strategy_id,
+                StrategyRun.status.in_(["COMPLETED", "RUNNING", "HALTED"]),
+            ).order_by(desc(StrategyRun.started_at)).limit(10)
+        )).scalars().all()
+
+    out = []
+    for r in runs:
+        m = json.loads(r.metrics) if r.metrics else {}
+        curve = json.loads(r.equity_curve) if r.equity_curve else []
+        if len(curve) > 100:                       # trim payload for cards
+            curve = curve[:: max(1, len(curve) // 100)]
+        p = json.loads(r.params or "{}")
+        out.append({
+            "run_id": r.id,
+            "mode": r.mode,                         # BACKTEST | PAPER | LIVE
+            "status": r.status,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "period_start": p.get("period_start"),
+            "period_end": p.get("period_end"),
+            "metrics": {k: m.get(k) for k in (
+                "total_trades", "win_rate", "roi_pct", "max_drawdown_pct",
+                "profit_factor", "sharpe", "starting_capital")},
+            "equity_curve": curve,
+        })
+
+    return {
+        "strategy_id": strategy_id,
+        "name": source.name,
+        "runs": out,
+        "disclaimer": (
+            "These are records of runs executed on this platform by the "
+            "creator. Backtest results are hypothetical; paper results are "
+            "simulated fills. Past or simulated performance does not predict "
+            "future results, and nothing here is investment advice or a "
+            "performance claim."
+        ),
+    }
+
+
 class CopyRequest(BaseModel):
     rename: Optional[str] = None            # optional new name for the copy
 

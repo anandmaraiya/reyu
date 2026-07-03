@@ -93,6 +93,25 @@ export default function Strategies() {
     onError: (e: any) => toast.push('error', e?.response?.data?.detail || 'Archive failed'),
   })
 
+  const del = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/strategies/${id}`),
+    onSuccess: (resp) => {
+      const d = resp.data
+      toast.push('success', d.deleted
+        ? 'Strategy deleted'
+        : d.reason || 'Archived instead (has run history)')
+      qc.invalidateQueries({ queryKey: ['strategies'] })
+    },
+    onError: (e: any) => toast.push('error', e?.response?.data?.detail || 'Delete failed'),
+  })
+
+  const handleDelete = (s: Strategy) => {
+    const msg = `Delete "${s.name}"?\n\nClean drafts are removed permanently. ` +
+      'Strategies with runs/trades are archived instead (their history is part ' +
+      'of your audit trail). This cannot be undone.'
+    if (window.confirm(msg)) del.mutate(s.id)
+  }
+
   const togglePublish = useMutation({
     mutationFn: ({ id, published }: { id: string; published: boolean }) =>
       api.post(`/api/strategies/${id}/publish`, { published }),
@@ -203,6 +222,7 @@ export default function Strategies() {
                 s={s}
                 onClick={() => nav(`/strategies/${s.id}`)}
                 onArchive={() => archive.mutate(s.id)}
+                onDelete={() => handleDelete(s)}
                 onTogglePublish={() => togglePublish.mutate({ id: s.id, published: !s.is_published })}
               />
             ))}
@@ -217,11 +237,13 @@ function StrategyCard({
   s,
   onClick,
   onArchive,
+  onDelete,
   onTogglePublish,
 }: {
   s: Strategy
   onClick: () => void
   onArchive: () => void
+  onDelete: () => void
   onTogglePublish: () => void
 }) {
   const universe = (s.spec?.universe || [])[0] || '—'
@@ -395,6 +417,23 @@ function StrategyCard({
                 }}
               >
                 archive
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDelete()
+                }}
+                title="Clean drafts are removed permanently; strategies with run history are archived (audit trail)."
+                style={{
+                  fontSize: 11,
+                  color: 'var(--danger, #e05252)',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              >
+                delete
               </button>
             </>
           )}

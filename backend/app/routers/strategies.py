@@ -479,6 +479,68 @@ async def live_monitor(
     }
 
 
+# ── DELETE /api/strategies/{id} ─────────────────────────────────────
+@router.delete("/{strategy_id}")
+async def delete_strategy(
+    request: Request,
+    strategy_id: str,
+    s: AsyncSession = Depends(get_session),
+):
+    """Delete a strategy. Layer 2: ownership.
+
+    Hard-deletes only when the strategy has NO runs/trades (a clean
+    draft) — otherwise it archives instead, because run and trade rows
+    are part of the append-only compliance trail and must keep their
+    lineage. Published or LIVE strategies must be unpublished/halted
+    first."""
+    owner = _owner(request)
+    rows = (await s.execute(
+        select(Strategy).where(
+            Strategy.id == strategy_id, Strategy.owner_id == owner,
+        )
+    )).scalars().all()
+    if not rows:
+        raise HTTPException(404, "Strategy not found")
+    latest = max(rows, key=lambda r: r.version)
+    if latest.status == "LIVE":
+        raise HTTPException(409, "Halt the live run before deleting.")
+    if latest.is_published:
+        raise HTTPException(409, "Un-publish this strategy before deleting it.")
+
+    from sqlalchemy import func as _func
+    from app.db import StrategyRun as _Run, StrategyTrade as _Trade
+    n_runs = (await s.execute(
+        select(_func.count()).select_from(_Run)
+        .where(_Run.strategy_id == strategy_id)
+    )).scalar() or 0
+    n_trades = (await s.execute(
+        select(_func.count()).select_from(_Trade)
+        .where(_Trade.strategy_id == strategy_id)
+    )).scalar() or 0
+
+    if n_runs == 0 and n_trades == 0:
+        for r in rows:
+            await s.delete(r)
+        await s.commit()
+        result = {"ok": True, "deleted": True, "archived": False}
+        action = "Hard-deleted (no runs/trades)"
+    else:
+        for r in rows:
+            r.status = "ARCHIVED"
+        await s.commit()
+        result = {"ok": True, "deleted": False, "archived": True,
+                  "reason": f"Strategy has {n_runs} runs / {n_trades} trades — "
+                            "archived instead to preserve the audit trail."}
+        action = f"Archived on delete ({n_runs} runs, {n_trades} trades preserved)"
+
+    from app.audit import record as _audit
+    await _audit(event_type="STRATEGY_DELETE",
+                 actor_id=owner, actor_email=None,
+                 resource_type="strategy", resource_id=strategy_id,
+                 action=action, request=request)
+    return result
+
+
 # ── POST /api/strategies/{id}/archive ──────────────────────────────
 @router.post("/{strategy_id}/archive")
 async def archive_strategy(

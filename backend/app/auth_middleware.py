@@ -45,6 +45,7 @@ _PUBLIC_PATHS = [
     re.compile(r"^/api/market/candles$"),  # price-chart terminal (delayed-data access level)
     re.compile(r"^/api/orders/lot-sizes$"),   # static lookup table, no user data
     re.compile(r"^/api/catalog$"),            # public strategy catalog
+    re.compile(r"^/api/catalog/[^/]+/results$"),  # published strategies' on-platform results (disclaimed facts)
     re.compile(r"^/api/legal/docs"),          # legal docs readable before signup (accept/status stay behind auth)
     re.compile(r"^/api/templates$"),          # template gallery browsable anonymously
     re.compile(r"^/api/templates/[^/]+$"),    # template preview (copy stays behind auth)

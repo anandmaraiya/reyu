@@ -258,7 +258,9 @@ export default function StrategyDetail() {
         </div>
 
         <div style={{ padding: 14 }}>
-          {tab === 'recipe' && <RecipeTab spec={strat.spec} />}
+          {tab === 'recipe' && (
+            <RecipeTab spec={strat.spec} strategyId={strat.id} status={strat.status} />
+          )}
           {tab === 'performance' && (
             <>
               <PerformanceTab
@@ -604,14 +606,100 @@ function LiveTab({
 }
 
 // ── Recipe tab ──────────────────────────────────────────────────────
-function RecipeTab({ spec }: { spec: any }) {
+function RecipeTab({ spec, strategyId, status }: {
+  spec: any
+  strategyId?: string
+  status?: string
+}) {
+  // Edit mode — the spec is the strategy. Saving PATCHes a NEW version
+  // (copy-on-edit): old runs keep pointing at their version.
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saveErr, setSaveErr] = useState<string | null>(null)
+  const qc = useQueryClient()
+  const toast = useToast()
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const parsed = JSON.parse(draft)      // throws → caught below
+      return (await api.patch(`/api/strategies/${strategyId}`, parsed)).data
+    },
+    onSuccess: (d) => {
+      toast.push('success', `Saved as v${d.version} — old runs keep their version`)
+      setEditing(false)
+      setSaveErr(null)
+      qc.invalidateQueries({ queryKey: ['strategy', strategyId] })
+    },
+    onError: (e: any) => {
+      const detail = e?.response?.data?.detail
+      setSaveErr(
+        e instanceof SyntaxError ? `Invalid JSON: ${e.message}`
+        : Array.isArray(detail) ? detail.map((d: any) => `${(d.loc || []).join('.')}: ${d.msg}`).join(' · ')
+        : typeof detail === 'string' ? detail : 'Save failed')
+    },
+  })
+
   if (!spec) return <div>—</div>
   const legs = spec.legs || []
   const ent = spec.entry_rules || {}
   const ex = spec.exit_rules || {}
   const risk = spec.risk || {}
+  const canEdit = !!strategyId && status !== 'ARCHIVED'
+
+  if (editing) {
+    return (
+      <div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontSize: 12, color: 'var(--muted)', flex: 1 }}>
+            Edit the full spec JSON. Saving creates a new version; existing runs stay
+            linked to the version they ran on.
+          </span>
+          <button className="btn" onClick={() => { setEditing(false); setSaveErr(null) }}>Cancel</button>
+          <button className="btn btn-primary" disabled={save.isPending}
+                  onClick={() => { setSaveErr(null); try { JSON.parse(draft) } catch (e: any) { setSaveErr(`Invalid JSON: ${e.message}`); return } save.mutate() }}>
+            {save.isPending ? 'Saving…' : 'Save as new version'}
+          </button>
+        </div>
+        {saveErr && (
+          <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 8, whiteSpace: 'pre-wrap' }}>
+            {saveErr}
+          </div>
+        )}
+        <textarea
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          spellCheck={false}
+          style={{
+            width: '100%', minHeight: 420, fontFamily: 'var(--font-mono)', fontSize: 12,
+            background: 'var(--card2)', color: 'var(--text)',
+            border: '1px solid var(--border)', borderRadius: 6, padding: 12,
+          }}
+        />
+      </div>
+    )
+  }
 
   return (
+    <div>
+    {canEdit && (
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+        <button
+          className="btn"
+          onClick={() => {
+            const { name, description, kind, tier_required, universe,
+                    legs: L, entry_rules, exit_rules, risk: R, tags, bandit } = spec
+            setDraft(JSON.stringify(
+              { name, description, kind, tier_required, universe,
+                legs: L, entry_rules, exit_rules, risk: R,
+                tags: tags || [], ...(bandit ? { bandit } : {}) },
+              null, 2))
+            setEditing(true)
+          }}
+        >
+          ✏️ Edit spec
+        </button>
+      </div>
+    )}
     <div
       style={{
         display: 'grid',
@@ -666,6 +754,7 @@ function RecipeTab({ spec }: { spec: any }) {
         <KV k="Max position ₹" v={num(risk.max_position_inr)} />
         <KV k="Max drawdown %" v={risk.max_drawdown_pct} />
       </Section>
+    </div>
     </div>
   )
 }
