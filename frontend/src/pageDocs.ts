@@ -35,8 +35,24 @@ export const pageDocs = {
 
   charts: {
     title: 'Charts',
+    subtitle: 'Price terminal — indices & stocks',
+    what: `Price, trend, and momentum for any index or stock: area chart with SMA20/50/200 overlays, RSI-14, and volume. Intraday views show NSE session hours only; every axis scales to the data on screen. For the options market view (PCR, OI, max pain), use Option Chain.`,
+    actions: [
+      { name: 'Symbol', detail: 'Click a ticker chip — indices and top stocks.' },
+      { name: 'Timeframe', detail: '1D/5D intraday (session hours only) · 1M/6M/1Y daily with SMA + RSI.' },
+      { name: 'Ask Reyu', detail: 'One click sends the symbol to Reyu for a data-grounded technical read.' },
+      { name: 'Build a strategy', detail: 'Jump to swing-equity templates to turn a view into a testable strategy.' },
+    ],
+    tips: [
+      'SMA and RSI panes appear on daily timeframes (1M+) where they are meaningful.',
+      'Charts are for study — nothing here is a recommendation.',
+    ],
+  },
+
+  chain: {
+    title: 'Option Chain',
     subtitle: 'Intelligent option-chain terminal',
-    what: `Live option chain for any NSE F&O symbol with AI-driven bias, PCR + max-pain interpretation, and today's suggested regime. The top intelligence bar tells you what the platform would do right now; the chain below is the raw data behind it.`,
+    what: `Live option chain for any NSE F&O symbol with AI-driven bias, PCR + max-pain interpretation, and today's data-derived regime read. The top intelligence bar shows what the data says (and which structure the platform's own paper strategy maps to — not a recommendation); the chain below is the raw data behind it.`,
     actions: [
       { name: 'Switch symbol', detail: 'Click any ticker chip (NIFTY, BANKNIFTY, RELIANCE, etc.) at the top toolbar.' },
       { name: 'Regime pill', detail: `Top of page — persistent hint on TREND UP / TREND DOWN / SIDEWAYS / FLAT based on today's PCR + momentum.` },
@@ -182,16 +198,16 @@ export const pageDocs = {
   rl: {
     title: 'RL Engine',
     subtitle: 'Reinforcement-learning trading',
-    what: `Inspect the platform's RL contextual bandit — its current policy weights, historical trades, and today's top recommendations. Requires Algo tier to view.`,
+    what: `Inspect the platform's RL contextual bandit — its current policy weights, historical trades, and today's highest-conviction model outputs (facts about the model, not investment advice). Requires Algo tier to view.`,
     actions: [
       { name: 'Policy', detail: 'See the learned weights per feature. Interpretable — larger = more influence on the action.' },
       { name: 'Trades', detail: 'Every trade the bandit has taken, with entry features + reward for training feedback.' },
-      { name: 'Recommendations', detail: 'Live top-conviction plays across the F&O universe. Refreshes every 60s (cached).' },
+      { name: 'Model outputs', detail: 'The bandit\'s live top-conviction reads across the F&O universe. Refreshes every 60s (cached). Model outputs, not advice.' },
       { name: 'Toggle', detail: 'Enable/disable the bandit. Disabled = no new trades, existing ones still get managed to close.' },
     ],
     tips: [
       'The RL bandit is superseded by the Regime Router paper-live for NIFTY — but the RL engine still runs for cross-symbol scanning.',
-      'Recommendations don\'t auto-execute. Click one to open a strategy draft with the recommended legs.',
+      'Model outputs never auto-execute. Click one to open a strategy draft with the model\'s legs — you review and decide.',
     ],
   },
 

@@ -282,14 +282,29 @@ async def list_sessions(user: dict | None = Depends(get_current_user)):
     sids = await store.r.smembers(key)
     sessions = []
     for sid in sids:
+        # Title = the FIRST user message (what the conversation is about);
+        # last message is usually Reyu's reply and makes a poor name.
+        first = await store.r.lrange(_session_key(sid), 0, 3)
         history = await _get_history(sid, limit=1)
-        if history:
-            sessions.append({
-                "session_id": sid,
-                "last_message": history[-1]["content"][:120],
-                "last_ts": history[-1].get("ts"),
-                "message_count": await store.r.llen(_session_key(sid)),
-            })
+        if not history:
+            continue
+        import json as _json
+        title = None
+        for raw in first:
+            try:
+                m = _json.loads(raw)
+                if m.get("role") == "user" and m.get("content"):
+                    title = m["content"].strip().replace("\n", " ")[:60]
+                    break
+            except Exception:
+                continue
+        sessions.append({
+            "session_id": sid,
+            "title": title or "Conversation",
+            "last_message": history[-1]["content"][:120],
+            "last_ts": history[-1].get("ts"),
+            "message_count": await store.r.llen(_session_key(sid)),
+        })
     sessions.sort(key=lambda s: s.get("last_ts") or "", reverse=True)
     return {"sessions": sessions}
 

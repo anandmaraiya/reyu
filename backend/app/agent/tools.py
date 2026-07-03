@@ -275,6 +275,21 @@ TOOLS: dict[str, dict[str, Any]] = {
         },
         "handler": t_create_strategy,
     },
+    "equity_analysis": {
+        "description": "Full technical read of a stock or index from REAL daily candles: "
+                       "trend vs SMA20/50/200, RSI-14, 52-week + 20-day level distances, "
+                       "volume surge, gap, 1/5/20-day returns. Use for ANY question about "
+                       "how a stock is doing technically. Never guess prices — call this.",
+        "parameters": {"symbol": "string (e.g. RELIANCE or NSE:TCS-EQ)"},
+        "handler": None,  # bound below — see analysis_tools import
+    },
+    "indicator_analysis": {
+        "description": "Recent daily SERIES for one indicator so you can describe shape, "
+                       "slope, and crossings: close | sma20 | sma50 | sma200 | rsi14 | volume.",
+        "parameters": {"symbol": "string", "indicator": "string (default close)",
+                       "days": "int (default 30, max 90)"},
+        "handler": None,  # bound below
+    },
     "list_my_strategies": {
         "description": "List the user's saved strategies — name, status, version, KPIs.",
         "parameters": {},
@@ -341,6 +356,12 @@ async def t_update_chat_plan(args: dict, _user: dict | None) -> dict:
 
 
 TOOLS["update_chat_plan"]["handler"] = t_update_chat_plan
+
+# Analysis skills (task #83) — imported late to avoid a circular import
+# through app.strategy.equity_runner at module load.
+from app.agent.analysis_tools import t_equity_analysis, t_indicator_analysis  # noqa: E402
+TOOLS["equity_analysis"]["handler"] = t_equity_analysis
+TOOLS["indicator_analysis"]["handler"] = t_indicator_analysis
 
 
 async def call_tool(name: str, args: dict, user: dict | None = None) -> dict:

@@ -1,6 +1,16 @@
+/**
+ * StructureMapPanel (file kept as RecommendationPanel for import stability).
+ *
+ * COMPLIANCE REWRITE: this panel previously displayed a "Suggested trade"
+ * with confidence — a direct trade recommendation, which the platform
+ * must never make. It now presents the same chain data as an educational
+ * bias→structure MAP: which option structure textbooks classically pair
+ * with the current data regime, clearly labelled as study material.
+ * The CTA opens the builder where the user constructs their own strategy.
+ */
 import { Chain } from '../api'
 
-type RecommendationPanelProps = {
+type Props = {
   chain: Chain
   onApply?: () => void
 }
@@ -10,36 +20,39 @@ function formatChange(value: number | null | undefined) {
   return `${value > 0 ? '+' : ''}${value.toFixed(0)}`
 }
 
-function getConfidence(pcr: number) {
-  if (pcr > 1.15) return { label: 'High', tone: 'positive' }
-  if (pcr < 0.85) return { label: 'High', tone: 'negative' }
-  if (pcr > 1.05 || pcr < 0.95) return { label: 'Medium', tone: 'neutral' }
-  return { label: 'Low', tone: 'neutral' }
+/** How one-sided the data currently is — a fact about the data, not
+ *  conviction in an outcome. */
+function getSignalStrength(pcr: number) {
+  if (pcr > 1.15 || pcr < 0.85) return { label: 'Strong', tone: 'positive' }
+  if (pcr > 1.05 || pcr < 0.95) return { label: 'Moderate', tone: 'neutral' }
+  return { label: 'Weak', tone: 'neutral' }
 }
 
-export default function RecommendationPanel({ chain, onApply }: RecommendationPanelProps) {
+export default function RecommendationPanel({ chain, onApply }: Props) {
   const summary = chain.summary
   const bias = chain.bias.bias
   const pcr = summary.pcr_oi ?? 1
-  const confidence = getConfidence(pcr)
-  const suggested = bias.includes('BULL') ? 'Bull Call Spread' : bias.includes('BEAR') ? 'Bear Put Spread' : 'Iron Condor'
-  const riskTag = bias.includes('BULL') ? 'Moderate' : bias.includes('BEAR') ? 'Moderate' : 'Balanced'
+  const strength = getSignalStrength(pcr)
+  const mapped = bias.includes('BULL') ? 'Bull Call Spread'
+    : bias.includes('BEAR') ? 'Bear Put Spread' : 'Iron Condor'
 
   return (
     <div className="recommendation-panel card-glass">
       <div className="recommendation-header">
         <div>
-          <div className="stat-label">AI Insights</div>
-          <h3>Suggested trade</h3>
+          <div className="stat-label">Study the data</div>
+          <h3>Bias → structure map</h3>
         </div>
-        <div className={`recommendation-badge recommendation-${confidence.tone}`}>{confidence.label} confidence</div>
+        <div className={`recommendation-badge recommendation-${strength.tone}`}>{strength.label} signal</div>
       </div>
 
       <div className="recommendation-summary">
         <div>
-          <div className="recommendation-title">{suggested}</div>
+          <div className="recommendation-title">{mapped}</div>
           <div className="recommendation-copy">
-            Based on bias, PCR, IV skew, and OI movement{chain.underlying ? ` for ${chain.underlying}` : ''}.
+            The structure textbooks classically pair with a {bias.toLowerCase()} read
+            (bias, PCR, IV skew, OI movement{chain.underlying ? ` for ${chain.underlying}` : ''}).
+            Educational mapping — not a recommendation. Build and test your own view.
           </div>
         </div>
         <div className="recommendation-quote">
@@ -67,8 +80,7 @@ export default function RecommendationPanel({ chain, onApply }: RecommendationPa
       </div>
 
       <div className="recommendation-actions">
-        <button type="button" className="primary" onClick={() => onApply?.()}>Apply to Strategy</button>
-        <button type="button" className="ghost">View details</button>
+        <button type="button" className="primary" onClick={() => onApply?.()}>Build your own in the builder</button>
       </div>
     </div>
   )

@@ -5,8 +5,8 @@
  * No dumb data-viewers.
  *
  * Layout (top → bottom):
- *   1. Regime pill (persistent) — what the platform would do today
- *   2. Three KPI tiles — Spot & change | AI bias | Regime action
+ *   1. Regime pill (persistent) — today's data-derived regime read
+ *   2. Three KPI tiles — Spot & change | AI bias | Regime Router paper mapping
  *   3. Three insight cards — auto-generated from chain data
  *      (Highest OI shift · Max Pain distance · Unusual OI writing)
  *   4. Quick actions — "Ask Reyu about this chain" · "Build strategy" · "Watch"
@@ -179,20 +179,23 @@ const num2 = (n: number | null | undefined) =>
   n == null || isNaN(n) ? '—' : Number(n).toFixed(2)
 
 // ── Regime classification (client-side, matches backend router logic) ──
-type Regime = { label: 'TREND_UP' | 'TREND_DOWN' | 'SIDEWAYS' | 'FLAT'; text: string; action: string }
+// `router_maps_to` is a FACT about the platform's canonical Regime Router
+// PAPER strategy — which structure ITS rules select in this regime. It is
+// never a recommendation for the user; the UI labels it accordingly.
+type Regime = { label: 'TREND_UP' | 'TREND_DOWN' | 'SIDEWAYS' | 'FLAT'; text: string; router_maps_to: string }
 function classifyRegime(chain: Chain | undefined, spot: number | undefined, prevClose: number | undefined): Regime {
   if (!chain || !spot || !prevClose) {
-    return { label: 'FLAT', text: 'Not enough data yet', action: 'WAIT' }
+    return { label: 'FLAT', text: 'Not enough data yet', router_maps_to: 'FLAT (no entry)' }
   }
   const pcr = chain.summary?.pcr_oi ?? 0
   const mom = ((spot / prevClose) - 1) * 100
 
-  if (mom >= 1.0) return { label: 'TREND_UP', text: `Underlying up ${num2(mom)}% — trend bias`, action: 'BUY CALL (ATM)' }
-  if (mom <= -1.0) return { label: 'TREND_DOWN', text: `Underlying down ${num2(mom)}% — put bias`, action: 'BUY PUT (ATM)' }
+  if (mom >= 1.0) return { label: 'TREND_UP', text: `Underlying up ${num2(mom)}% — trend regime`, router_maps_to: 'LONG_CE' }
+  if (mom <= -1.0) return { label: 'TREND_DOWN', text: `Underlying down ${num2(mom)}% — trend regime`, router_maps_to: 'LONG_PE' }
   if (Math.abs(mom) <= 0.5 && pcr >= 0.7 && pcr <= 1.4) {
-    return { label: 'SIDEWAYS', text: `Range-bound (PCR ${num2(pcr)}, move ${num2(mom)}%)`, action: 'IRON CONDOR (ATM±50 / ATM±400)' }
+    return { label: 'SIDEWAYS', text: `Range-bound (PCR ${num2(pcr)}, move ${num2(mom)}%)`, router_maps_to: 'IRON_CONDOR' }
   }
-  return { label: 'FLAT', text: 'Signal unclear — sit this one out', action: 'NO TRADE' }
+  return { label: 'FLAT', text: 'Mixed signals — no clear regime', router_maps_to: 'FLAT (no entry)' }
 }
 
 // ── Auto-generated insights from chain data ──
@@ -291,12 +294,12 @@ export default function ChartsIntelligenceBar({
 
   return (
     <div style={S.wrap}>
-      {/* Persistent regime pill — what the platform would do right now */}
+      {/* Persistent regime pill — today's data-derived regime read */}
       <div style={S.regimePill(biasDisplay)}>
         <span style={S.regimeDot(regimeDotColor)} />
-        <span>Platform view: <strong>{regime.label.replace('_', ' ')}</strong></span>
+        <span>Regime read: <strong>{regime.label.replace('_', ' ')}</strong></span>
         <span style={{ opacity: 0.7 }}>·</span>
-        <span>{regime.action}</span>
+        <span>{regime.text}</span>
       </div>
 
       {/* Hero row — 3 tiles */}
@@ -330,11 +333,13 @@ export default function ChartsIntelligenceBar({
         </div>
 
         <div style={S.heroCard}>
-          <div style={S.heroLabel}>Regime read</div>
+          <div style={S.heroLabel}>Regime Router maps to (paper)</div>
           <div style={{ ...S.heroValue, fontSize: 18 }}>
-            {regime.action}
+            {regime.router_maps_to}
           </div>
-          <div style={S.heroSubtitle}>{regime.text}</div>
+          <div style={S.heroSubtitle}>
+            What the platform's own paper strategy plays here — not a recommendation
+          </div>
         </div>
       </div>
 

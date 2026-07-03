@@ -14,6 +14,7 @@ import {
   CartesianGrid, Legend, ReferenceLine,
 } from 'recharts'
 import { chartTooltipStyles } from '../chartTheme'
+import { marketHoursOnly } from '../marketHours'
 
 const fmtTime = (iso: string) => {
   try {
@@ -107,15 +108,16 @@ export default function OITimeSeries({ symbol, chain, interval = '5m', defaultMo
   })
 
   const chartData = useMemo(() => {
+    // Session hours only — pre/post-market buckets distort the x-axis.
     if (mode === 'UNDERLYING') {
-      return (under?.rows ?? []).map((row: any) => ({
+      return marketHoursOnly((under?.rows ?? []) as { ts: string }[]).map((row: any) => ({
         ts: fmtTime(row.ts),
         CE_OI: row.total_ce_oi, PE_OI: row.total_pe_oi,
         CE_DOI: row.ce_oi_delta, PE_DOI: row.pe_oi_delta,
         SPOT: row.ltp,
       }))
     }
-    return (optd?.rows ?? []).map((row: any) => ({
+    return marketHoursOnly((optd?.rows ?? []) as { ts: string }[]).map((row: any) => ({
       ts: fmtTime(row.ts),
       OPT_OI: row.oi, OPT_DOI: row.oi_change, OPT_LTP: row.close,
     }))

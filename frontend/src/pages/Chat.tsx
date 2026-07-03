@@ -82,8 +82,8 @@ export default function Chat() {
       setStarters([
         { icon: '📊', text: "What's the current NIFTY option chain telling us?" },
         { icon: '🔥', text: 'Find unusual OI buildup in BANKNIFTY' },
-        { icon: '⚡', text: 'Build me a quick scalp setup for today' },
-        { icon: '📈', text: 'Should I sell straddle or strangle this expiry?' },
+        { icon: '⚡', text: "What does today's expiry data look like?" },
+        { icon: '📈', text: 'How does ATM IV compare with recent days?' },
       ])
     })
   }, [user?.email])
@@ -157,6 +157,57 @@ export default function Chat() {
 
   const isEmpty = messages.length === 0
 
+  // ── Chat history (past sessions, named after the opening question) ──
+  type SessionRow = { session_id: string; title: string; last_ts: string | null; message_count: number }
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historySessions, setHistorySessions] = useState<SessionRow[]>([])
+
+  const refreshHistory = useCallback(async () => {
+    if (!user) return
+    try {
+      const r = await api.get('/api/chat/sessions')
+      setHistorySessions(r.data.sessions || [])
+    } catch { /* history is best-effort */ }
+  }, [user])
+
+  useEffect(() => { if (historyOpen) refreshHistory() }, [historyOpen, refreshHistory])
+
+  const loadSession = useCallback(async (sid: string) => {
+    try {
+      const r = await api.get(`/api/chat/sessions/${sid}`)
+      const msgs: Message[] = (r.data.messages || []).map((m: any) => ({
+        id: uuid(), role: m.role, content: m.content, ts: m.ts || new Date().toISOString(),
+      }))
+      setMessages(msgs)
+      setSessionId(sid)
+      sessionStorage.setItem(SESSION_KEY, sid)
+      setHistoryOpen(false)
+    } catch { /* deleted/expired session */ refreshHistory() }
+  }, [refreshHistory])
+
+  const newChat = useCallback(() => {
+    setMessages([])
+    setSessionId(null)
+    sessionStorage.removeItem(SESSION_KEY)
+    setHistoryOpen(false)
+  }, [])
+
+  const deleteSession = useCallback(async (sid: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try { await api.delete(`/api/chat/sessions/${sid}`) } catch { /* already gone */ }
+    if (sid === sessionId) newChat()
+    refreshHistory()
+  }, [sessionId, newChat, refreshHistory])
+
+  const fmtWhen = (ts: string | null) => {
+    if (!ts) return ''
+    const d = new Date(ts.endsWith('Z') ? ts : ts + 'Z')
+    const days = Math.floor((Date.now() - d.getTime()) / 86400000)
+    if (days === 0) return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })
+    if (days === 1) return 'yesterday'
+    return `${days}d ago`
+  }
+
   return (
     <div className="agent-page">
       <div style={{
@@ -169,9 +220,80 @@ export default function Chat() {
         top: 0,
         zIndex: 5,
       }}>
+        {user && (
+          <button
+            onClick={() => setHistoryOpen(o => !o)}
+            title="Chat history"
+            style={{
+              padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              background: historyOpen ? 'var(--color-primary, #f0a020)' : 'var(--color-surface, var(--card))',
+              color: historyOpen ? '#fff' : 'var(--color-text-primary, var(--text))',
+              border: '1px solid var(--color-border, var(--border))', borderRadius: 8,
+            }}
+          >🕐 History</button>
+        )}
+        {!isEmpty && (
+          <button
+            onClick={newChat}
+            title="Start a new conversation"
+            style={{
+              padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              background: 'var(--color-surface, var(--card))',
+              color: 'var(--color-text-primary, var(--text))',
+              border: '1px solid var(--color-border, var(--border))', borderRadius: 8,
+            }}
+          >＋ New chat</button>
+        )}
         <ChatPlanPanel sessionId={sessionId} />
         <ChatUsageMeter />
       </div>
+
+      {/* History drawer */}
+      {historyOpen && (
+        <div style={{
+          position: 'absolute', top: 46, right: 20, zIndex: 30, width: 320,
+          maxHeight: '60vh', overflowY: 'auto',
+          background: 'var(--color-surface, var(--card))',
+          border: '1px solid var(--color-border, var(--border))',
+          borderRadius: 10, boxShadow: '0 8px 30px rgba(0,0,0,.35)', padding: 8,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--color-text-muted, var(--muted))', padding: '6px 8px' }}>
+            Past conversations
+          </div>
+          {historySessions.length === 0 && (
+            <div style={{ padding: '14px 8px', fontSize: 12.5, color: 'var(--color-text-muted, var(--muted))' }}>
+              No saved conversations yet — they appear here after you chat while signed in.
+            </div>
+          )}
+          {historySessions.map(s => (
+            <div
+              key={s.session_id}
+              onClick={() => loadSession(s.session_id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                padding: '9px 8px', borderRadius: 8,
+                background: s.session_id === sessionId ? 'var(--color-primary, #f0a020)22' : 'transparent',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+                  overflow: 'hidden', textOverflow: 'ellipsis',
+                  color: 'var(--color-text-primary, var(--text))',
+                }}>{s.title}</div>
+                <div style={{ fontSize: 11, color: 'var(--color-text-muted, var(--muted))' }}>
+                  {fmtWhen(s.last_ts)} · {s.message_count} msgs
+                </div>
+              </div>
+              <button
+                onClick={(e) => deleteSession(s.session_id, e)}
+                title="Delete conversation"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted, var(--muted))', fontSize: 14, padding: 4 }}
+              >🗑</button>
+            </div>
+          ))}
+        </div>
+      )}
       {isEmpty ? (
         <div className="chat-empty">
           <div className="chat-empty-logo">R</div>

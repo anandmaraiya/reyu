@@ -42,6 +42,7 @@ _PUBLIC_PATHS = [
     re.compile(r"^/api/options/"),         # read-only chain/quotes (free tier)
     re.compile(r"^/api/market/ticks$"),    # spot ribbon on landing page (anonymous OK)
     re.compile(r"^/api/market/ticks/refresh$"),
+    re.compile(r"^/api/market/candles$"),  # price-chart terminal (delayed-data access level)
     re.compile(r"^/api/orders/lot-sizes$"),   # static lookup table, no user data
     re.compile(r"^/api/catalog$"),            # public strategy catalog
     re.compile(r"^/api/legal/docs"),          # legal docs readable before signup (accept/status stay behind auth)

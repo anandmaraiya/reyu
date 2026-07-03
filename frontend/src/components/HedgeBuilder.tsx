@@ -36,7 +36,7 @@ export default function HedgeBuilder({ underlying, chain }: { underlying: string
           <option>BUY</option><option>SELL</option>
         </select>
         <input className="input" type="number" min={1} value={qty} onChange={e => setQty(+e.target.value)} style={{ width: 60 }} />
-        <button className="primary" onClick={build} disabled={loading}>{loading ? '…' : 'Suggest'}</button>
+        <button className="primary" onClick={build} disabled={loading}>{loading ? '…' : 'Compute hedge'}</button>
       </div>
       {result?.legs && (
         <>

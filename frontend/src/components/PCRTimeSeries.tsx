@@ -6,6 +6,7 @@ import {
   ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import { chartTooltipStyles } from '../chartTheme'
+import { marketHoursOnly, fmtIST } from '../marketHours'
 
 type Row = {
   ts: string; ltp: number; pcr_oi: number; pcr_volume: number; max_pain: number
@@ -13,7 +14,7 @@ type Row = {
   ce_oi_delta: number; pe_oi_delta: number; bias_score: number
 }
 
-const fmtTime = (s: string) => s.slice(11, 16)
+const fmtTime = fmtIST
 
 export default function PCRTimeSeries({ symbol }: { symbol: string }) {
   const [interval, setIntervalT] = useState<'1m' | '5m' | '15m'>('5m')
@@ -26,7 +27,8 @@ export default function PCRTimeSeries({ symbol }: { symbol: string }) {
     refetchInterval: 30000,
   })
 
-  const rows = data?.rows || []
+  // Session-hours only — overnight/pre-market buckets distort the x-axis
+  const rows = marketHoursOnly(data?.rows || [])
 
   return (
     <div className="card">
@@ -74,14 +76,20 @@ export default function PCRTimeSeries({ symbol }: { symbol: string }) {
             <ResponsiveContainer>
               <ComposedChart data={rows} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
                 <XAxis dataKey="ts" tickFormatter={fmtTime} tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                {/* Left: OI deltas. Right: spot — its own axis scaled to the
+                    displayed data; sharing an axis with ΔOI flattened both. */}
+                <YAxis yAxisId="oi" tick={{ fontSize: 10, fill: '#94a3b8' }} domain={['auto', 'auto']} />
+                <YAxis yAxisId="spot" orientation="right"
+                       tick={{ fontSize: 10, fill: '#94a3b8' }}
+                       domain={['dataMin', 'dataMax']}
+                       tickFormatter={(v: number) => v.toLocaleString('en-IN', { maximumFractionDigits: 0 })} />
                 <Tooltip {...chartTooltipStyles()}
                          labelFormatter={fmtTime} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <ReferenceLine y={0} stroke="#94a3b8" />
-                <Bar dataKey="ce_oi_delta" name="CE ΔOI" fill="#dc2626" />
-                <Bar dataKey="pe_oi_delta" name="PE ΔOI" fill="#16a34a" />
-                <Line type="monotone" dataKey="ltp" name="Spot" stroke="#e5e7eb" dot={false} yAxisId={0} />
+                <ReferenceLine y={0} yAxisId="oi" stroke="#94a3b8" />
+                <Bar yAxisId="oi" dataKey="ce_oi_delta" name="CE ΔOI" fill="#dc2626" />
+                <Bar yAxisId="oi" dataKey="pe_oi_delta" name="PE ΔOI" fill="#16a34a" />
+                <Line yAxisId="spot" type="monotone" dataKey="ltp" name="Spot" stroke="#e5e7eb" dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>

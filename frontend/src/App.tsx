@@ -41,6 +41,7 @@ const Activity       = lazy(() => import('./pages/Activity'))
 const PortfolioOverview = lazy(() => import('./pages/PortfolioOverview'))
 const Templates      = lazy(() => import('./pages/Templates'))
 const Creator        = lazy(() => import('./pages/Creator'))
+const PriceCharts    = lazy(() => import('./pages/PriceCharts'))
 // Core
 const Dashboard      = lazy(() => import('./pages/Dashboard'))
 const Positions      = lazy(() => import('./pages/Positions'))
@@ -128,8 +129,8 @@ function AppShell() {
                 <Route path="/"           element={<Chat />} />
                 <Route path="/agent"      element={<Navigate to="/" replace />} />
 
-                {/* Charts / option chain */}
-                <Route path="/charts"     element={<Dashboard />} />
+                {/* Price terminal vs option-chain terminal — distinct jobs */}
+                <Route path="/charts"     element={<PriceCharts />} />
                 <Route path="/chain"      element={<Dashboard />} />
 
                 {/* Positions */}

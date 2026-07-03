@@ -175,8 +175,15 @@ Keep this framing implicit in how you talk — don't recite disclaimers every me
 {f"- {starters_ctx}" if starters_ctx else ""}
 
 ## Tool use
-You have access to tools for: quotes, option_chain, backtest, save_strategy, get_positions, rl_signals, update_chat_plan.
+You have access to tools for: quotes, option_chain, backtest, save_strategy, get_positions, rl_signals, update_chat_plan, equity_analysis, indicator_analysis.
 Always call the tool rather than guessing live data. After tool results, synthesize — don't just dump raw JSON.
+
+## Analysis skills (which tool grounds which kind of question)
+- **Equity/stock analysis** — `equity_analysis(symbol)`: real daily-candle technicals (trend vs SMAs, RSI, 52-week position, volume, returns). Use for ANY "how is <stock> doing" question. Never quote a price from memory.
+- **Technical / indicator analysis** — `indicator_analysis(symbol, indicator, days)`: the recent series for close/sma20/sma50/sma200/rsi14/volume, so you can describe slope, shape, and crossings.
+- **Option-chain analysis** — the chain tools (option_chain, quotes): PCR, OI structure, max pain, IV. Interpret; don't prescribe.
+- **Fundamental analysis** — the platform has NO fundamentals data feed yet (no P/E, earnings, balance-sheet data). Say so plainly, explain what fundamental factors one WOULD look at conceptually, and offer the technical read instead. NEVER invent fundamental numbers.
+- All analysis is educational data interpretation. Describe what the data shows and what it historically implies — never "you should buy/sell".
 
 ## The chat-to-strategy arc (default flow when user is exploring)
 When a user is unclear or exploring, walk them through this arc in one conversation:
@@ -210,14 +217,14 @@ def get_conversation_starters(
     live_starters = [
         {"icon": "📊", "text": "What's the current NIFTY option chain telling us?"},
         {"icon": "🔥", "text": "Find unusual OI buildup in BANKNIFTY right now"},
-        {"icon": "⚡", "text": "Quick scalp setup for today's expiry"},
-        {"icon": "📈", "text": "Show me ATM IV vs historical — is this good to sell?"},
+        {"icon": "⚡", "text": "What does today's expiry data look like?"},
+        {"icon": "📈", "text": "How does ATM IV compare with recent days?"},
     ]
     pre_open_starters = [
         {"icon": "🌏", "text": "What are overnight global cues saying about today's open?"},
         {"icon": "📐", "text": "Build me a strategy for today's expected range"},
         {"icon": "🔍", "text": "Check pre-open OI for NIFTY — any unusual positioning?"},
-        {"icon": "⚖️",  "text": "Should I carry my positions overnight or exit at open?"},
+        {"icon": "⚖️",  "text": "What does the data say about overnight risk right now?"},
     ]
     weekend_starters = [
         {"icon": "🧪", "text": "Backtest an Iron Condor on NIFTY for last 3 months"},
@@ -229,7 +236,7 @@ def get_conversation_starters(
         {"icon": "📋", "text": "Review today's P&L and what went right or wrong"},
         {"icon": "🔭", "text": "Plan tomorrow's strategy based on today's close"},
         {"icon": "🧮", "text": "Run a backtest on the strategy I built today"},
-        {"icon": "💡", "text": "What's the best expiry structure for next week?"},
+        {"icon": "💡", "text": "Walk me through next week's expiry structure"},
     ]
 
     starters_map = {

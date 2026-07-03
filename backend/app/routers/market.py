@@ -9,11 +9,80 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.config import settings
 
 router = APIRouter(prefix="/api/market", tags=["market"])
+
+
+@router.get("/candles")
+async def candles(
+    symbol: str,
+    timeframe: str = "1M",
+):
+    """OHLCV candles for the price-chart terminal (P-02 /charts redesign).
+
+    timeframe: 1D (1-min bars, today, session hours only) · 5D (5-min) ·
+    1M / 6M / 1Y (daily). Intraday serves from the tick_1m cache; daily
+    goes through fetch_daily_candles (Fyers D-resolution with tick-cache
+    fallback). Public — same access level as delayed chain data.
+    Returns {candles: [[epoch, o, h, l, c, v], …], resolution, source}.
+    """
+    from datetime import date, timedelta
+    symbol = symbol.strip().upper()
+    if ":" not in symbol:
+        symbol = f"NSE:{symbol}"
+    if not (symbol.endswith("-EQ") or symbol.endswith("-INDEX")):
+        symbol += "-EQ"
+
+    tf = timeframe.upper()
+    today = date.today()
+    try:
+        if tf in ("1D", "5D"):
+            from app.fyers import cache as _cache
+            days = 1 if tf == "1D" else 7          # calendar span for ~5 sessions
+            raw = await _cache.get_candles(
+                symbol, resolution="1",
+                range_from=(today - timedelta(days=days)).isoformat(),
+                range_to=today.isoformat(),
+            )
+            bars = raw.get("candles") or []
+            # 5D → resample 1-min to 5-min buckets
+            if tf == "5D" and bars:
+                buckets: dict[int, list] = {}
+                for c in bars:
+                    k = int(c[0]) - int(c[0]) % 300
+                    b = buckets.get(k)
+                    if b is None:
+                        buckets[k] = [k, c[1], c[2], c[3], c[4], c[5] or 0]
+                    else:
+                        b[2] = max(b[2], c[2]); b[3] = min(b[3], c[3])
+                        b[4] = c[4]; b[5] += c[5] or 0
+                bars = [buckets[k] for k in sorted(buckets)]
+            # Session hours only (09:15–15:30 IST = minute 555..930)
+            def _ist_min(ts: int) -> int:
+                return ((ts + 19800) % 86400) // 60
+            bars = [c for c in bars if 555 <= _ist_min(int(c[0])) <= 930]
+            return {"symbol": symbol, "timeframe": tf,
+                    "resolution": "1m" if tf == "1D" else "5m",
+                    "source": raw.get("source", "tick_1m"),
+                    "candles": bars}
+
+        span = {"1M": 31, "6M": 186, "1Y": 366}.get(tf)
+        if span is None:
+            raise HTTPException(400, "timeframe must be one of 1D, 5D, 1M, 6M, 1Y")
+        from app.strategy.equity_runner import fetch_daily_candles
+        bars, source = await fetch_daily_candles(
+            symbol, today - timedelta(days=span), today, min_days=5)
+        return {"symbol": symbol, "timeframe": tf, "resolution": "D",
+                "source": source, "candles": bars}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"candle fetch failed: {e}")
 
 # Canonical demo/seed values — also used when Fyers is not connected.
 _DEMO: dict[str, dict] = {

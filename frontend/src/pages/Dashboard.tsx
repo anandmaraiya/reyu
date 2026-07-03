@@ -195,7 +195,7 @@ export default function Dashboard() {
 
   return (
     <div className="page-shell">
-      <PageHelp pageId="charts" />
+      <PageHelp pageId="chain" />
       <div className="page-toolbar">
         <FilterBar
           title=""
