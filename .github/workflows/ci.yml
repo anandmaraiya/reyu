@@ -72,15 +72,21 @@ jobs:
         run: mypy app/ --ignore-missing-imports || true
         continue-on-error: true
 
+      - name: Create integration test database
+        run: |
+          PGPASSWORD=reyu psql -h localhost -U reyu -d reyu \
+            -c "CREATE DATABASE reyu_test" || true
+
       - name: Test + coverage (money-path scope, PRODUCT_SPEC §7.1)
         env:
-          DATABASE_URL: postgresql+asyncpg://reyu:reyu@localhost:5432/reyu
+          # Integration conftest refuses DBs without 'test' in the name.
+          DATABASE_URL: postgresql+asyncpg://reyu:reyu@localhost:5432/reyu_test
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test-secret-for-ci
         run: |
           pytest tests/ \
-            --cov=app/strategy --cov=app/legal.py \
-            --cov=app/templates_catalog.py --cov=app/routers/tv_hooks.py \
+            --cov=app.strategy --cov=app.legal --cov=app.templates_catalog \
+            --cov=app.routers.tv_hooks --cov=app.routers.legal \
             --cov-report=xml --cov-report=term
 
       - name: Coverage floor gate (money-path)
@@ -91,12 +97,12 @@ jobs:
           line_rate = float(root.attrib.get('line-rate', 0)) * 100
           print(f"Money-path line coverage: {line_rate:.1f}%")
           # Ratchet toward 85% money-path per PRODUCT_SPEC.md §7.1.
-          # 25% = pure-unit suite baseline (spec 92%, equity_features 95%,
-          # runner math). The DB-coupled runner loops (runner.py,
-          # paper_live, equity_paper_live, regime_router_live) are 0% and
-          # need integration fixtures — raise this floor with each PR that
-          # adds them. Lowering the floor requires CPO sign-off.
-          floor = 25
+          # Measured 54% on app.strategy with unit + integration suites
+          # (equity_runner 88%, equity_paper_live 76%, features 100%);
+          # remaining zeros: options runner.py backtest loop, paper_live
+          # intraday loop, regime_router_live. Raise with each PR adding
+          # fixtures there. Lowering the floor requires CPO sign-off.
+          floor = 50
           if line_rate < floor:
               print(f"::error::Money-path coverage {line_rate:.1f}% below floor {floor}%")
               raise SystemExit(1)
