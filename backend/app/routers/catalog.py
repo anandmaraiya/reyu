@@ -69,6 +69,42 @@ async def list_published(
 
         rows = (await s.execute(q)).scalars().all()
 
+        # Creator display names (public name only — never email). Powers
+        # the "by <name>" link to /creators/{id} on catalog cards.
+        creators: dict[str, str] = {}
+        if rows:
+            from app.db import User as _User
+            owner_ids = list({r.owner_id for r in rows if r.owner_id})
+            if owner_ids:
+                u_rows = (await s.execute(
+                    select(_User.id, _User.display_name)
+                    .where(_User.id.in_(owner_ids))
+                )).fetchall()
+                creators = {u.id: (u.display_name or "Reyu trader") for u in u_rows}
+
+        # Forward-test facts (P3 creator trust): how long each published
+        # strategy has ACTUALLY paper/live-traded on-platform and how many
+        # trades that produced. Pure facts — no returns shown, no ranking.
+        ft: dict[str, dict] = {}
+        if rows:
+            from sqlalchemy import text as _text
+            ft_rows = (await s.execute(_text("""
+                SELECT r.strategy_id,
+                       COUNT(DISTINCT DATE(t.entry_ts))       AS traded_days,
+                       COUNT(t.id)                            AS trades,
+                       MIN(r.started_at)                      AS since
+                FROM strategy_runs r
+                LEFT JOIN strategy_trades t ON t.run_id = r.id
+                WHERE r.mode IN ('PAPER','LIVE')
+                  AND r.strategy_id = ANY(:sids)
+                GROUP BY r.strategy_id
+            """), {"sids": [r.id for r in rows]})).fetchall()
+            ft = {r.strategy_id: {
+                "forward_traded_days": int(r.traded_days or 0),
+                "forward_trades": int(r.trades or 0),
+                "forward_since": r.since.date().isoformat() if r.since else None,
+            } for r in ft_rows}
+
     def _preview_spec(spec_json: str) -> dict:
         try:
             spec = json.loads(spec_json or "{}")
@@ -96,6 +132,14 @@ async def list_published(
                 "published_at": r.published_at.isoformat() if r.published_at else None,
                 "copies_count": r.copies_count or 0,
                 "preview": _preview_spec(r.spec),
+                "forward_test": ft.get(r.id) or {
+                    "forward_traded_days": 0, "forward_trades": 0,
+                    "forward_since": None,
+                },
+                "creator": {
+                    "id": r.owner_id,
+                    "display_name": creators.get(r.owner_id, "Reyu trader"),
+                },
             }
             for r in rows
         ],

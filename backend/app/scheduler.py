@@ -418,6 +418,77 @@ async def regime_router_close_job() -> None:
         log.exception("regime-router close failed: %s", e)
 
 
+async def broker_reauth_nudge_job() -> None:
+    """Weekdays 08:15 IST (F-B5) — if the Fyers token is expired, DM every
+    user who has a RUNNING paper/live strategy so they re-auth before the
+    market opens. Idempotent per day via a Redis flag; skips entirely when
+    auth is healthy. KPI: same-day re-auth rate ≥ 70% (PRODUCT_SPEC §5.3)."""
+    from datetime import date as _date
+    from sqlalchemy import text as _text
+    from app.fyers import client as fy
+    from app.db import SessionLocal
+    from app.store import store
+    from app.digest import _telegram_dm
+
+    try:
+        if await fy.get_access_token():
+            return                                # auth healthy — no nudge
+        flag = f"reauth_nudge:{_date.today().isoformat()}"
+        if await store.r.get(flag):
+            return                                # already nudged today
+        await store.r.set(flag, "1", ex=86400)
+
+        async with SessionLocal() as s:
+            rows = (await s.execute(_text("""
+                SELECT DISTINCT r.owner_id
+                FROM strategy_runs r
+                WHERE r.status = 'RUNNING' AND r.mode IN ('PAPER','LIVE')
+            """))).fetchall()
+
+        msg = ("⚠️ *Fyers session expired.* Your running strategies can't "
+               "fetch live data or trade until you re-authenticate.\n"
+               "Reconnect before 09:15 IST: open Reyu → Brokers → Reconnect.")
+        sent = 0
+        for r in rows:
+            if await _telegram_dm(r.owner_id, msg):
+                sent += 1
+        log.warning("broker re-auth nudge: fyers auth DOWN — nudged %d/%d "
+                    "users with active runs", sent, len(rows))
+    except Exception as e:
+        log.exception("re-auth nudge failed: %s", e)
+
+
+async def equity_morning_job() -> None:
+    """Weekdays 09:20 IST — enter equity paper positions whose signal
+    fired on yesterday's daily bar. See app.strategy.equity_paper_live."""
+    from app.strategy.equity_paper_live import morning_cycle
+    try:
+        log.info("equity morning: %s", await morning_cycle())
+    except Exception as e:
+        log.exception("equity morning cycle failed: %s", e)
+
+
+async def equity_eod_job() -> None:
+    """Weekdays 15:40 IST — run the SL/TP/trailing/time-stop ladder on
+    open equity paper positions against today's completed daily bar."""
+    from app.strategy.equity_paper_live import eod_manage_cycle
+    try:
+        log.info("equity eod: %s", await eod_manage_cycle())
+    except Exception as e:
+        log.exception("equity eod cycle failed: %s", e)
+
+
+async def morning_digest_job() -> None:
+    """Weekdays 08:30 IST — per-user digest (active strategies, yesterday's
+    realised P&L, open positions) via Telegram + email. See app.digest."""
+    from app.digest import send_morning_digest
+    try:
+        result = await send_morning_digest()
+        log.info("morning digest: %s", result)
+    except Exception as e:
+        log.exception("morning digest failed: %s", e)
+
+
 async def onboarding_drip_job() -> None:
     """Runs daily 03:00 UTC (~08:30 IST). Sends drip emails to users at
     day 1, 3, 7 post-signup. Idempotent — never sends the same template
@@ -545,6 +616,27 @@ def start() -> None:
     scheduler.add_job(onboarding_drip_job,
                       CronTrigger(hour=3, minute=0),
                       id="onboarding_drip", max_instances=1, coalesce=True)
+    # Morning digest — 08:30 IST = 03:00 UTC, Mon-Fri. Per-user summary of
+    # running strategies (Telegram + email) so time-poor users start the
+    # day informed without opening the app.
+    scheduler.add_job(morning_digest_job,
+                      CronTrigger(day_of_week="mon-fri", hour=3, minute=0),
+                      id="morning_digest", max_instances=1, coalesce=True)
+    # Broker re-auth nudge — 08:15 IST = 02:45 UTC, Mon-Fri. Only fires
+    # a message when Fyers auth is actually down (F-B5).
+    scheduler.add_job(broker_reauth_nudge_job,
+                      CronTrigger(day_of_week="mon-fri", hour=2, minute=45),
+                      id="broker_reauth_nudge", max_instances=1, coalesce=True)
+    # Equity paper-live — entries 09:20 IST (03:50 UTC), exit ladder
+    # 15:40 IST (10:10 UTC), Mon-Fri. Daily cadence mirrors the
+    # EQUITY_EOD backtest semantics (signal on yesterday's close,
+    # fill near today's open, manage on today's completed bar).
+    scheduler.add_job(equity_morning_job,
+                      CronTrigger(day_of_week="mon-fri", hour=3, minute=50),
+                      id="equity_morning", max_instances=1, coalesce=True)
+    scheduler.add_job(equity_eod_job,
+                      CronTrigger(day_of_week="mon-fri", hour=10, minute=10),
+                      id="equity_eod", max_instances=1, coalesce=True)
     # Regime-router morning decision — 09:25 IST = 03:55 UTC, Mon-Fri.
     # 5 min before market open so legs price off the most recent snapshot.
     scheduler.add_job(regime_router_morning_job,

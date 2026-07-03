@@ -29,6 +29,12 @@ type CatalogItem = {
   published_at: string | null
   copies_count: number
   preview: Preview
+  forward_test?: {
+    forward_traded_days: number
+    forward_trades: number
+    forward_since: string | null
+  }
+  creator?: { id: string; display_name: string }
 }
 
 const S = {
@@ -195,7 +201,32 @@ export default function Catalog() {
             </div>
 
             <h3 style={S.name}>{s.name}</h3>
+            {s.creator && (
+              <a href={`/creators/${s.creator.id}`}
+                 style={{ fontSize: 11.5, color: 'var(--text-muted)', textDecoration: 'none' }}>
+                by <span style={{ color: 'var(--brand-primary, #f0a020)' }}>{s.creator.display_name}</span>
+              </a>
+            )}
             {s.description && <p style={S.desc}>{s.description}</p>}
+
+            {/* Forward-test facts — verified on-platform paper/live history.
+                Factual only: days + trade count, never returns or rank. */}
+            {(s.forward_test?.forward_traded_days ?? 0) > 0 && (
+              <div
+                title="This strategy has actually run on-platform (paper or live). Days and trade counts are verified facts — they say nothing about profitability."
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  fontSize: 11, fontWeight: 600, padding: '3px 10px',
+                  borderRadius: 'var(--radius-full)', alignSelf: 'flex-start',
+                  background: 'var(--accent-light, #4a9fda22)',
+                  color: 'var(--accent-text, #4a9fda)',
+                }}
+              >
+                ⏱ Forward-tested · {s.forward_test!.forward_traded_days}{' '}
+                {s.forward_test!.forward_traded_days === 1 ? 'day' : 'days'} ·{' '}
+                {s.forward_test!.forward_trades} trades
+              </div>
+            )}
 
             {(s.preview.brackets?.target_pct || s.preview.brackets?.stop_pct) && (
               <div style={S.specRow}>

@@ -41,7 +41,9 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'charts',    label: 'Charts',        icon: <ChartsIcon />,    path: '/charts' },
   { id: 'chain',     label: 'Option Chain',  icon: <ChainIcon />,     path: '/chain' },
   { id: 'positions', label: 'Positions',     icon: <PositionsIcon />, path: '/positions' },
+  { id: 'portfolio', label: 'Portfolio',     icon: <PortfolioIcon />, path: '/portfolio' },
   { id: 'journal',   label: 'Journal',       icon: <PortfolioIcon />, path: '/journal' },
+  { id: 'templates', label: 'Templates',     icon: <SavedIcon />,     path: '/templates', group: 'My Strategies' },
   { id: 'catalog',   label: 'Catalog',       icon: <ChainIcon />,     path: '/catalog',   group: 'My Strategies' },
   { id: 'strategies',label: 'Saved',         icon: <SavedIcon />,     path: '/strategies',group: 'My Strategies' },
   { id: 'backtest',  label: 'Backtest',      icon: <BacktestIcon />,  path: '/backtest',  group: 'My Strategies' },
@@ -79,7 +81,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: { mobileOpen?: boolean; o
 
   function handleNav(item: NavItem) {
     // Protected paths prompt login if anonymous
-    const protected_ = ['/positions', '/strategies', '/backtest', '/compare', '/orders', '/brokers', '/subscribe', '/rl', '/activity']
+    const protected_ = ['/positions', '/portfolio', '/strategies', '/backtest', '/compare', '/orders', '/brokers', '/subscribe', '/rl', '/activity']
     if (!user && protected_.includes(item.path)) {
       openGate({ mode: 'login', message: `Sign in to access ${item.label}.`, onSuccess: () => navigate(item.path) })
       return

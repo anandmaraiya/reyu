@@ -97,7 +97,7 @@ export const pageDocs = {
   strategies: {
     title: 'Saved Strategies',
     subtitle: 'Your strategy library',
-    what: `Every strategy you've created, copied from the catalog, or built via chat. Backtest, tweak, promote to paper-live (Pro+) or live (Algo). Each edit creates a new version — old runs stay linked to their version so lineage is preserved.`,
+    what: `Every strategy you've created, copied from the catalog, or built via chat — intraday options (CONDITIONAL), RL-driven (RL_BANDIT), or cash-equity swing/SIP (EQUITY_EOD, daily bars + delivery + multi-day holds). Backtest, tweak, promote to paper-live (Pro+) or live (Algo). Each edit creates a new version — old runs stay linked to their version so lineage is preserved.`,
     actions: [
       { name: 'Create', detail: 'From scratch: fill in the spec form. Or copy from Catalog / build via Chat.' },
       { name: 'Backtest', detail: 'Run against historical data. Both quick (last 90 days) and deep (multi-year Bhavcopy) modes.' },

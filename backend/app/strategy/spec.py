@@ -19,10 +19,21 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.rl.features import FEATURE_NAMES
+from app.strategy.equity_features import EQUITY_FEATURE_NAMES
+
+# Combined condition vocabulary. Options-chain features drive
+# CONDITIONAL/RL_BANDIT strategies; eq_* daily-bar features drive
+# EQUITY_EOD strategies. The whitelist is the union — kind consistency
+# (equity kind ⇒ equity features) is checked in StrategySpec.
+ALL_FEATURE_NAMES: list[str] = list(FEATURE_NAMES) + list(EQUITY_FEATURE_NAMES)
 
 
 # ── Enumerations ───────────────────────────────────────────────────
-StrategyKind = Literal["CONDITIONAL", "RL_BANDIT"]
+# EQUITY_EOD: daily-bar cash-equity strategy. Conditions evaluate on
+# each day's close (eq_* features); entry fills at next day's open;
+# positions are delivery (CNC) and can be held multi-day — exits via
+# TP/SL brackets, trailing stop, time stop (days), or end of run.
+StrategyKind = Literal["CONDITIONAL", "RL_BANDIT", "EQUITY_EOD"]
 StrategyStatus = Literal["DRAFT", "BACKTESTED", "PAPER_LIVE", "LIVE", "ARCHIVED"]
 LegAction = Literal["BUY", "SELL"]
 InstrumentType = Literal["OPTION", "FUTURE", "EQUITY"]
@@ -67,6 +78,10 @@ class Leg(BaseModel):
     strike: StrikeSpec | None = None
     expiry: ExpirySpec | None = None
     qty_lots: int = Field(1, ge=1, le=100)
+    # Broker product type. EQUITY legs in EQUITY_EOD strategies default
+    # to CNC (delivery) so positions can be held overnight; derivatives
+    # legs stay INTRADAY unless explicitly set.
+    product: Literal["CNC", "INTRADAY", "MARGIN"] | None = None
 
     @model_validator(mode="after")
     def _check(self):
@@ -87,8 +102,8 @@ class Condition(BaseModel):
     @field_validator("feature")
     @classmethod
     def _whitelist(cls, v):
-        if v not in FEATURE_NAMES:
-            allowed = ", ".join(FEATURE_NAMES[:6]) + "…"
+        if v not in ALL_FEATURE_NAMES:
+            allowed = ", ".join(FEATURE_NAMES[:4]) + "… / " + ", ".join(EQUITY_FEATURE_NAMES[:4]) + "…"
             raise ValueError(f"unknown feature `{v}`. Allowed: {allowed}")
         return v
 
@@ -134,11 +149,19 @@ class ExitRules(BaseModel):
     sl_pct: float = Field(..., gt=0, lt=2)
     time_stop_minutes: int | None = Field(None, ge=1, le=1440)
     exit_at_close: bool = True
+    # Multi-day holds (EQUITY_EOD; ignored by intraday kinds).
+    # `exit_at_close` is meaningless for delivery positions — the equity
+    # runner ignores it and relies on the fields below + brackets.
+    time_stop_days: int | None = Field(None, ge=1, le=365)
+    trailing_sl_pct: float | None = Field(None, gt=0, lt=1,
+        description="Exit when close drops this fraction below the highest close since entry")
 
 
 # ── Risk caps ──────────────────────────────────────────────────────
 class RiskCaps(BaseModel):
-    max_concurrent: int = Field(1, ge=1, le=20)
+    # le=60 accommodates EQUITY_EOD systematic accumulation (e.g. weekly
+    # SIP tranches held ~1 year). Intraday kinds typically use 1-5.
+    max_concurrent: int = Field(1, ge=1, le=60)
     max_daily_loss_inr: float = Field(5000, ge=0)
     max_position_inr: float = Field(50_000, ge=0)
     max_drawdown_pct: float = Field(15.0, ge=0, le=100)
@@ -181,6 +204,31 @@ class StrategySpec(BaseModel):
         u = self.universe[0]
         if ":" not in u:
             raise ValueError("universe symbols must be Fyers-formatted, e.g. NSE:NIFTY50-INDEX")
+
+        if self.kind == "EQUITY_EOD":
+            if u.endswith("-INDEX"):
+                raise ValueError("EQUITY_EOD needs a tradable stock (e.g. NSE:RELIANCE-EQ), not an index")
+            for leg in self.legs:
+                if leg.instrument_type != "EQUITY":
+                    raise ValueError("EQUITY_EOD legs must be instrument_type=EQUITY")
+                if leg.action != "BUY":
+                    raise ValueError("EQUITY_EOD supports long (BUY) delivery only — "
+                                     "short-selling delivery isn't possible on NSE")
+                if leg.product is None:
+                    leg.product = "CNC"
+            # eq_* features only — chain features don't exist on daily equity bars
+            for c in self.entry_rules.conditions:
+                if not c.feature.startswith("eq_"):
+                    raise ValueError(
+                        f"EQUITY_EOD conditions must use eq_* features, got `{c.feature}`")
+            if self.entry_rules.trigger == "BANDIT":
+                raise ValueError("EQUITY_EOD doesn't support BANDIT trigger")
+        else:
+            # Options/chain kinds must not use equity daily-bar features.
+            for c in self.entry_rules.conditions:
+                if c.feature.startswith("eq_"):
+                    raise ValueError(
+                        f"eq_* features require kind=EQUITY_EOD, got `{c.feature}` on {self.kind}")
         return self
 
 

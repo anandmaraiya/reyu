@@ -70,7 +70,7 @@ async def require_paid(request: Request):
         _gate(401, "Sign in to use this feature.", "login")
     tier = user.get("tier", "free")
     if tier not in ("paid", "algo"):
-        _gate(402, "Upgrade to Pro ($20/mo) to unlock this feature.", "upgrade")
+        _gate(402, "Upgrade to Pro (₹2,000/mo) to unlock this feature.", "upgrade")
     return user
 
 
@@ -141,7 +141,7 @@ async def gate_paper_trade(request: Request):
     if not user:
         _gate(401, "Sign in to paper trade.", "login")
     if user.get("tier", "free") not in ("paid", "algo"):
-        _gate(402, "Paper trading is available on the Pro plan ($20/mo).", "upgrade")
+        _gate(402, "Paper trading is available on the Pro plan (₹2,000/mo).", "upgrade")
     return user
 
 

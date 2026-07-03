@@ -74,6 +74,43 @@ def evaluate_all(
     return all(evaluate_one(c, features, previous_features) for c in conditions)
 
 
+def evaluate_one_dict(
+    cond: Condition,
+    features: dict[str, float],
+    previous_features: dict[str, float] | None = None,
+) -> bool:
+    """Dict-keyed variant of evaluate_one — used by the EQUITY_EOD runner
+    whose eq_* features are name→value dicts, not positional vectors.
+    A feature missing from `features` (insufficient warmup) fails the
+    condition rather than raising."""
+    if cond.feature not in features:
+        return False
+    val = features[cond.feature]
+    op = cond.op
+    if op == ">":
+        return val > cond.value
+    if op == "<":
+        return val < cond.value
+    if op == ">=":
+        return val >= cond.value
+    if op == "<=":
+        return val <= cond.value
+    if op == "==":
+        return val == cond.value
+    if op == "between":
+        lo, hi = cond.value
+        return lo <= val <= hi
+    if op == "crosses_above":
+        if not previous_features or cond.feature not in previous_features:
+            return False
+        return previous_features[cond.feature] <= cond.value < val
+    if op == "crosses_below":
+        if not previous_features or cond.feature not in previous_features:
+            return False
+        return previous_features[cond.feature] >= cond.value > val
+    raise ValueError(f"unsupported op {op!r}")
+
+
 # ── Schedule ───────────────────────────────────────────────────────
 _DAY_MAP = {"MON": 0, "TUE": 1, "WED": 2, "THU": 3, "FRI": 4}
 

@@ -12,7 +12,7 @@ type Strategy = {
   version: number
   name: string
   description: string | null
-  kind: 'CONDITIONAL' | 'RL_BANDIT'
+  kind: 'CONDITIONAL' | 'RL_BANDIT' | 'EQUITY_EOD'
   status: 'DRAFT' | 'BACKTESTED' | 'PAPER_LIVE' | 'LIVE' | 'ARCHIVED'
   tier_required: string
   created_by: string
@@ -49,11 +49,14 @@ function StatusPill({ status }: { status: string }) {
 }
 
 function KindBadge({ kind }: { kind: string }) {
+  const bg = kind === 'RL_BANDIT' ? '#6b46c1'
+    : kind === 'EQUITY_EOD' ? '#2da14b'
+    : '#37415140'
   return (
     <span
       style={{
-        background: kind === 'RL_BANDIT' ? '#6b46c1' : '#37415140',
-        color: kind === 'RL_BANDIT' ? '#fff' : 'var(--text)',
+        background: bg,
+        color: kind === 'CONDITIONAL' ? 'var(--text)' : '#fff',
         padding: '2px 8px',
         borderRadius: 10,
         fontSize: 10,

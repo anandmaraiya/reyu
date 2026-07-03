@@ -299,6 +299,13 @@ async def promote_strategy(
         tier = _tier(request)
         if tier != "algo":
             raise HTTPException(403, "LIVE mode requires `algo` tier.")
+        # EQUITY_EOD live execution (real CNC orders) isn't wired yet —
+        # only the paper-live daily loop runs equity strategies. Blocking
+        # here prevents a silent no-op LIVE deployment.
+        if row.kind == "EQUITY_EOD":
+            raise HTTPException(400,
+                "Equity strategies support PAPER_LIVE forward-testing today; "
+                "LIVE (real CNC orders) is coming soon.")
         # Compliance gate — user must have accepted the platform legal docs
         # AND the live-execution authorization before any real order fires.
         from app.routers.legal import require_acceptance

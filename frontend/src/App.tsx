@@ -38,6 +38,9 @@ const Journal        = lazy(() => import('./pages/Journal'))
 const Catalog        = lazy(() => import('./pages/Catalog'))
 const Legal          = lazy(() => import('./pages/Legal'))
 const Activity       = lazy(() => import('./pages/Activity'))
+const PortfolioOverview = lazy(() => import('./pages/PortfolioOverview'))
+const Templates      = lazy(() => import('./pages/Templates'))
+const Creator        = lazy(() => import('./pages/Creator'))
 // Core
 const Dashboard      = lazy(() => import('./pages/Dashboard'))
 const Positions      = lazy(() => import('./pages/Positions'))
@@ -156,6 +159,9 @@ function AppShell() {
                 <Route path="/legal"          element={<Legal />} />
                 <Route path="/legal/:docType" element={<Legal />} />
                 <Route path="/activity"       element={<Activity />} />
+                <Route path="/portfolio"      element={<PortfolioOverview />} />
+                <Route path="/templates"      element={<Templates />} />
+                <Route path="/creators/:id"   element={<Creator />} />
 
                 {/* RL dashboard */}
                 <Route path="/rl"         element={<RL />} />

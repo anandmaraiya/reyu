@@ -163,6 +163,15 @@ app.include_router(catalog.publish_router) # prefix="/api/strategies" for the pu
 app.include_router(follows.router)         # prefix="/api/follows"
 app.include_router(follows.followers_router) # prefix="/api/strategies" for followers count
 app.include_router(legal.router)           # prefix="/api/legal" — compliance docs + acceptance
+from app.routers import portfolio_overview as _pov
+app.include_router(_pov.router)            # prefix="/api/portfolio-overview" — cross-strategy book view
+from app.routers import templates as _templates
+app.include_router(_templates.router)      # prefix="/api/templates" — persona strategy templates
+from app.routers import creators as _creators
+app.include_router(_creators.router)       # prefix="/api/creators" — public creator profiles
+from app.routers import tv_hooks as _tv
+app.include_router(_tv.router)             # prefix="/api/hooks/tv" — TradingView signal webhooks
+app.include_router(_tv.owner_router)       # prefix="/api/strategies" — owner hook-URL fetch
 
 
 @app.get("/api/health")

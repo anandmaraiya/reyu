@@ -159,6 +159,11 @@ export default function Onboarding() {
   const [traderType, setTraderType] = useState<TraderType | null>(() =>
     (localStorage.getItem(TYPE_STORAGE_KEY) as TraderType) || null
   )
+  // Trading style → template persona. Optional; routes the user to a
+  // matching template gallery after onboarding instead of a blank slate.
+  const [tradingStyle, setTradingStyle] = useState<string | null>(() =>
+    localStorage.getItem('reyu_trading_style')
+  )
   const [submitting, setSubmitting] = useState(false)
 
   // Fire onboard_started once per session
@@ -171,6 +176,9 @@ export default function Onboarding() {
   useEffect(() => {
     if (traderType) localStorage.setItem(TYPE_STORAGE_KEY, traderType)
   }, [traderType])
+  useEffect(() => {
+    if (tradingStyle) localStorage.setItem('reyu_trading_style', tradingStyle)
+  }, [tradingStyle])
 
   // Fyers auth status (used by Step 2 gate)
   const { data: authStatus, refetch: refetchAuth } = useQuery({
@@ -198,10 +206,12 @@ export default function Onboarding() {
     setSubmitting(true)
     try {
       await api.post('/api/user/mark-onboarded', { trader_type: traderType })
-      track(Events.OnboardCompleted, { trader_type: traderType })
+      track(Events.OnboardCompleted, { trader_type: traderType, trading_style: tradingStyle })
       localStorage.removeItem(STEP_STORAGE_KEY)
       localStorage.removeItem(TYPE_STORAGE_KEY)
-      nav('/', { replace: true })
+      // Land on templates matching their style — a concrete starting
+      // point beats an empty dashboard.
+      nav(tradingStyle ? `/templates?persona=${tradingStyle}` : '/', { replace: true })
     } catch (e) {
       // If mark-onboarded fails, don't strand the user — send them home anyway.
       // They can retry later; onboarded_at stays null so they'll see the flow again.
@@ -252,7 +262,7 @@ export default function Onboarding() {
               >
                 <div style={S.choiceTitle}>Retail trader</div>
                 <div style={S.choiceDesc}>
-                  Personal capital, options + F&O focus. Start with paper trades on ranked strategies, upgrade to live once you're comfortable.
+                  Personal capital. Build and test your own strategies, paper-trade them in real time, go live once you're comfortable.
                 </div>
               </button>
 
@@ -266,6 +276,31 @@ export default function Onboarding() {
                   Managing your own or client capital. Higher position limits, priority Fyers pooling, concierge onboarding.
                 </div>
               </button>
+
+              <p style={{ ...S.hint, marginTop: 20 }}>What do you trade most?</p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                {[
+                  { key: 'intraday_options', label: '⚡ Intraday options' },
+                  { key: 'options_income', label: '💰 Options income' },
+                  { key: 'swing_equity', label: '📈 Swing stocks' },
+                  { key: 'systematic_invest', label: '🐢 Systematic investing' },
+                ].map(s => (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => setTradingStyle(s.key)}
+                    style={{
+                      padding: '8px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+                      borderRadius: 999,
+                      background: tradingStyle === s.key ? 'var(--brand-primary, #f0a020)' : 'var(--bg-elevated)',
+                      color: tradingStyle === s.key ? '#fff' : 'var(--text-primary)',
+                      border: '1px solid var(--border-default)',
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
 
               <div style={S.row}>
                 <span />

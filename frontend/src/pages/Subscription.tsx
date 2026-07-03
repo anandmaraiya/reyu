@@ -2,7 +2,9 @@
  * Subscription / billing page  (/subscribe)
  *
  * Tiers match AuthContext: 'free' | 'pro' | 'algo'
- * Pricing: $0 (15-day trial) | $20/mo | $99/mo
+ * Pricing (INR): ₹0 (15-day trial) | ₹2,000/mo | ₹9,900/mo
+ * Must stay in sync with backend/app/routers/billing.py TIER_PRICES
+ * and the Razorpay plan amounts configured in the Razorpay dashboard.
  * Uses useAuth() + api from AuthContext — no old ../api import.
  */
 import { useState, useEffect, useCallback } from 'react'
@@ -13,8 +15,8 @@ import { useAuth, api } from '../context/AuthContext'
 interface Plan {
   id: 'free' | 'pro' | 'algo'
   name: string
-  priceUSD: number
-  priceAnnualUSD: number
+  priceINR: number
+  priceAnnualINR: number
   tagline: string
   cta: string
   highlight: boolean
@@ -25,8 +27,8 @@ const PLANS: Plan[] = [
   {
     id: 'free',
     name: 'Starter',
-    priceUSD: 0,
-    priceAnnualUSD: 0,
+    priceINR: 0,
+    priceAnnualINR: 0,
     tagline: '15-day trial with live market data',
     cta: 'Current plan',
     highlight: false,
@@ -46,8 +48,8 @@ const PLANS: Plan[] = [
   {
     id: 'pro',
     name: 'Pro',
-    priceUSD: 20,
-    priceAnnualUSD: 192, // $16/mo billed annually
+    priceINR: 2000,
+    priceAnnualINR: 19200, // ₹1,600/mo billed annually (~20% off)
     tagline: 'Full live trading — unlimited everything',
     cta: 'Upgrade to Pro',
     highlight: true,
@@ -67,8 +69,8 @@ const PLANS: Plan[] = [
   {
     id: 'algo',
     name: 'Algo',
-    priceUSD: 99,
-    priceAnnualUSD: 948, // $79/mo billed annually
+    priceINR: 9900,
+    priceAnnualINR: 94800, // ₹7,900/mo billed annually (~20% off)
     tagline: 'For systematic traders & desks',
     cta: 'Upgrade to Algo',
     highlight: false,
@@ -203,8 +205,9 @@ export default function Subscription() {
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
+  const inr = (n: number) => n.toLocaleString('en-IN')
   const displayPrice = (plan: Plan) =>
-    cycle === 'month' ? plan.priceUSD : Math.round(plan.priceAnnualUSD / 12)
+    cycle === 'month' ? plan.priceINR : Math.round(plan.priceAnnualINR / 12)
 
   const isActive = subStatus?.subscription_status === 'active'
 
@@ -309,12 +312,12 @@ export default function Subscription() {
                 <div className="sub-plan-name">{plan.name}</div>
                 <div className="sub-price-row">
                   <span className="sub-price">
-                    {plan.priceUSD === 0 ? 'Free' : `$${displayPrice(plan)}`}
+                    {plan.priceINR === 0 ? 'Free' : `₹${inr(displayPrice(plan))}`}
                   </span>
-                  {plan.priceUSD > 0 && <span className="sub-price-unit">/mo</span>}
+                  {plan.priceINR > 0 && <span className="sub-price-unit">/mo</span>}
                 </div>
-                {cycle === 'year' && plan.priceAnnualUSD > 0 && (
-                  <div className="sub-billed-note">billed ${plan.priceAnnualUSD}/year</div>
+                {cycle === 'year' && plan.priceAnnualINR > 0 && (
+                  <div className="sub-billed-note">billed ₹{inr(plan.priceAnnualINR)}/year</div>
                 )}
                 <div className="sub-tagline">{plan.tagline}</div>
               </div>
@@ -356,8 +359,8 @@ export default function Subscription() {
           <span>💳 All major cards</span>
         </div>
         <p className="sub-trust-note">
-          Payments processed via Razorpay. No questions asked cancellation policy.
-          INR billing available — price shown in USD for reference.
+          All prices in INR, inclusive of billing via Razorpay (UPI, cards, netbanking).
+          No questions asked cancellation policy.
         </p>
       </div>
 

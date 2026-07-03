@@ -245,17 +245,32 @@ TOOLS: dict[str, dict[str, Any]] = {
         "handler": t_chart_request,
     },
     "create_strategy": {
-        "description": "Create + save a new options strategy. Accepts shorthand "
+        "description": "Create + save a new strategy (options OR cash equity). Accepts shorthand "
                        "(name, universe, action, option_type, tp_pct, sl_pct, feature, op, value) "
-                       "or a full {spec} object. Saves as DRAFT.",
+                       "or a full {spec} object. Saves as DRAFT. "
+                       "For EQUITY strategies (swing/positional/SIP on stocks like NSE:RELIANCE-EQ), "
+                       "set kind=EQUITY_EOD — daily-bar signals, delivery (CNC), multi-day holds, "
+                       "long-only. Equity condition features (eq_*): eq_close, eq_sma20_dist_pct, "
+                       "eq_sma50_dist_pct, eq_sma200_dist_pct, eq_sma20_above_sma50, "
+                       "eq_close_above_sma200, eq_rsi_14, eq_high_52w_dist_pct, eq_low_52w_dist_pct, "
+                       "eq_high_20d_dist_pct, eq_volume_surge, eq_gap_pct, eq_ret_1d_pct, "
+                       "eq_ret_5d_pct, eq_ret_20d_pct. No conditions + kind=EQUITY_EOD = "
+                       "SIP-style scheduled accumulation on `days`.",
         "parameters": {
-            "name": "string", "universe": "string (e.g. NSE:NIFTY50-INDEX)",
-            "action": "BUY|SELL", "option_type": "CE|PE",
+            "name": "string", "universe": "string (e.g. NSE:NIFTY50-INDEX or NSE:RELIANCE-EQ)",
+            "kind": "CONDITIONAL|EQUITY_EOD (default CONDITIONAL=options intraday)",
+            "action": "BUY|SELL (options only; equity is BUY-only)", "option_type": "CE|PE",
             "tp_pct": "float 0..1", "sl_pct": "float 0..1",
-            "feature": "string (optional - rl feature name)",
-            "op": "string (>|<|>=|<=|== between)",
+            "trailing_sl_pct": "float 0..1 (EQUITY_EOD: trail from peak close)",
+            "time_stop_days": "int (EQUITY_EOD: max holding days)",
+            "feature": "string (optional - rl feature or eq_* feature name)",
+            "op": "string (>|<|>=|<=|== between crosses_above crosses_below)",
             "value": "float (condition threshold)",
+            "conditions": "list[{feature,op,value}] (multiple conditions, ANDed)",
+            "days": "list[MON..FRI] (SCHEDULE trigger / SIP days)",
             "qty_lots": "int (default 1)",
+            "max_position_inr": "float (per-position capital cap)",
+            "max_concurrent": "int (EQUITY_EOD SIP: how many tranches may be open)",
             "tags": "list[string]", "spec": "object (full StrategySpec)",
         },
         "handler": t_create_strategy,

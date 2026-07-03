@@ -112,6 +112,13 @@ async def _execute_run_inner(run_id: str) -> None:
     spec = StrategySpec.model_validate(spec_raw)
     params = json.loads(run.params or "{}")
 
+    # EQUITY_EOD strategies run on daily bars with delivery mechanics —
+    # a different simulator entirely (see equity_runner docstring).
+    if spec.kind == "EQUITY_EOD":
+        from app.strategy.equity_runner import execute_equity_run_inner
+        await execute_equity_run_inner(run_id)
+        return
+
     underlying = spec.universe[0]
     period_start = date.fromisoformat(params["period_start"])
     period_end = date.fromisoformat(params["period_end"])

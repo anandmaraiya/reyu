@@ -35,12 +35,14 @@ TIER_PLANS = {
     ("algo", "year"): settings.razorpay_plan_algo_yearly,
 }
 
-# Prices in paise (1 INR = 100 paise)
+# Prices in paise (1 INR = 100 paise). Must match the amounts configured
+# on the Razorpay plan IDs above (Razorpay dashboard) AND the display
+# prices in frontend/src/pages/Subscription.tsx.
 TIER_PRICES = {
-    ("pro", "month"): 99900,     # ₹999
-    ("pro", "year"): 999000,     # ₹9,990
-    ("algo", "month"): 299900,   # ₹2,999
-    ("algo", "year"): 2999000,   # ₹29,990
+    ("pro", "month"): 200000,     # ₹2,000
+    ("pro", "year"): 1920000,     # ₹19,200 (₹1,600/mo)
+    ("algo", "month"): 990000,    # ₹9,900
+    ("algo", "year"): 9480000,    # ₹94,800 (₹7,900/mo)
 }
 
 

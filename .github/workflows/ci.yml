@@ -72,33 +72,50 @@ jobs:
         run: mypy app/ --ignore-missing-imports || true
         continue-on-error: true
 
-      - name: Test + coverage
+      - name: Test + coverage (money-path scope, PRODUCT_SPEC §7.1)
         env:
           DATABASE_URL: postgresql+asyncpg://reyu:reyu@localhost:5432/reyu
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: test-secret-for-ci
         run: |
-          pytest --cov=app --cov-report=xml --cov-report=term \
-            --cov-fail-under=40 tests/ || echo "TESTS_MISSING=true" >> $GITHUB_ENV
+          pytest tests/ \
+            --cov=app/strategy --cov=app/legal.py \
+            --cov=app/templates_catalog.py --cov=app/routers/tv_hooks.py \
+            --cov-report=xml --cov-report=term
 
-      - name: Coverage floor gate
+      - name: Coverage floor gate (money-path)
         run: |
-          if [ -f coverage.xml ]; then
-            python - <<'EOF'
+          python - <<'EOF'
           import xml.etree.ElementTree as ET
           root = ET.parse('coverage.xml').getroot()
           line_rate = float(root.attrib.get('line-rate', 0)) * 100
-          print(f"Line coverage: {line_rate:.1f}%")
-          # Rollout schedule from PRODUCT_SPEC.md §7.1: 70% Q3 → 80% Q4 → 85% Q1
-          # Starting soft at 40% while backfilling tests.
-          floor = 40
+          print(f"Money-path line coverage: {line_rate:.1f}%")
+          # Ratchet toward 85% money-path per PRODUCT_SPEC.md §7.1.
+          # 25% = pure-unit suite baseline (spec 92%, equity_features 95%,
+          # runner math). The DB-coupled runner loops (runner.py,
+          # paper_live, equity_paper_live, regime_router_live) are 0% and
+          # need integration fixtures — raise this floor with each PR that
+          # adds them. Lowering the floor requires CPO sign-off.
+          floor = 25
           if line_rate < floor:
-              print(f"::error::Line coverage {line_rate:.1f}% below floor {floor}%")
+              print(f"::error::Money-path coverage {line_rate:.1f}% below floor {floor}%")
               raise SystemExit(1)
           EOF
-          else
-            echo "No coverage.xml — tests scaffold needed; ratcheting starts once tests exist."
+
+      - name: Compliance copy gate (PRODUCT_SPEC §6)
+        working-directory: .
+        run: |
+          # Block user-facing profitability/ranking claims. Exemptions:
+          # tests, and app/legal.py (the ToS legitimately PROHIBITS these
+          # phrases, so it must be allowed to mention them).
+          if grep -rniE "guaranteed returns|sure profit|top performing strateg|assured profit" \
+              backend/app/ frontend/src/ \
+              --include="*.py" --include="*.tsx" --include="*.ts" \
+              | grep -v "test_" | grep -v "app/legal.py" | grep -vi "banned"; then
+            echo "::error::User-facing copy contains profitability claims (PRODUCT_SPEC §6)"
+            exit 1
           fi
+          echo "Copy gate clean."
 
   # ── Frontend: eslint + typecheck + build ──────────────────────────────
   frontend:

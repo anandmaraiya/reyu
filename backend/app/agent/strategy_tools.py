@@ -132,14 +132,60 @@ def _build_shorthand_spec(args: dict) -> dict | None:
     if not (name and universe and tp and sl):
         return None
 
-    # Conditions — if user gave a single (feature, op, value), wrap
-    cond = []
+    # Conditions — if user gave a single (feature, op, value), wrap.
+    # Also accept a list of {feature, op, value} via `conditions`.
+    cond = list(args.get("conditions") or [])
     if args.get("feature") and args.get("op") and args.get("value") is not None:
         cond.append({
             "feature": args["feature"],
             "op": args["op"],
             "value": args["value"],
         })
+
+    # ── EQUITY_EOD shorthand — daily-bar cash-equity strategy ───────
+    # Selected explicitly via kind, or inferred from eq_* features /
+    # an -EQ symbol with instrument_type EQUITY.
+    is_equity = (
+        (args.get("kind") or "").upper() == "EQUITY_EOD"
+        or (args.get("instrument_type") or "").upper() == "EQUITY"
+        or any(str(c.get("feature", "")).startswith("eq_") for c in cond)
+    )
+    if is_equity:
+        return {
+            "name": name,
+            "description": args.get("description"),
+            "kind": "EQUITY_EOD",
+            "tier_required": args.get("tier_required") or "free",
+            "universe": universe,
+            "legs": [{
+                "leg_id": "L1",
+                "action": "BUY",
+                "instrument_type": "EQUITY",
+                "qty_lots": 1,
+            }],
+            "entry_rules": {
+                "trigger": "SIGNAL" if cond else "SCHEDULE",
+                "schedule": {
+                    "days": args.get("days") or ["MON", "TUE", "WED", "THU", "FRI"],
+                    "time_window": "09:15-15:30",
+                },
+                "conditions": cond,
+            },
+            "exit_rules": {
+                "tp_pct": float(tp),
+                "sl_pct": float(sl),
+                "trailing_sl_pct": (float(args["trailing_sl_pct"])
+                                    if args.get("trailing_sl_pct") else None),
+                "time_stop_days": (int(args["time_stop_days"])
+                                   if args.get("time_stop_days") else None),
+            },
+            "risk": {
+                "max_concurrent": int(args.get("max_concurrent") or 1),
+                "max_daily_loss_inr": float(args.get("max_daily_loss_inr") or 10000),
+                "max_position_inr": float(args.get("max_position_inr") or 50000),
+            },
+            "tags": args.get("tags") or [],
+        }
 
     return {
         "name": name,

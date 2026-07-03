@@ -176,7 +176,7 @@ export function GateModal() {
             <div className="gate-plan-card">
               <div className="gate-plan-name">Reyu Pro</div>
               <div className="gate-plan-price">
-                <span className="gate-plan-amount">$20</span>
+                <span className="gate-plan-amount">₹2,000</span>
                 <span className="gate-plan-period">/month</span>
               </div>
               <ul className="gate-plan-features">

@@ -64,7 +64,7 @@ def build_system_prompt(
         if trial_days_left is not None and trial_days_left <= 3:
             tier_ctx = (
                 f"The user is on the FREE trial with {days_str} left. "
-                "Subtly mention that upgrading to Pro ($20/mo) keeps their strategies alive and unlocks paper trading. "
+                "Subtly mention that upgrading to Pro (₹2,000/mo) keeps their strategies alive and unlocks paper trading. "
                 "One mention per session, not every reply."
             )
         else:

@@ -49,9 +49,12 @@ async def cycle() -> dict:
 
     async with SessionLocal() as s:
         # Latest-version PAPER_LIVE strategies, all owners
+        # EQUITY_EOD strategies run on a daily cadence in
+        # app.strategy.equity_paper_live — not this intraday loop.
         sub = (
             select(Strategy.id, func.max(Strategy.version).label("v"))
-            .where(Strategy.status == "PAPER_LIVE")
+            .where(Strategy.status == "PAPER_LIVE",
+                   Strategy.kind != "EQUITY_EOD")
             .group_by(Strategy.id).subquery()
         )
         strats = (await s.execute(
@@ -205,6 +208,16 @@ async def _fire_one(
         policy_version=policy_version,
     )
     s.add(st)
+
+    # Owner alert (Telegram, fire-and-forget) — P2b
+    try:
+        from app.digest import alert_trade_opened
+        await alert_trade_opened(
+            strat.owner_id, strat.name, run.mode,
+            rl_trade.leg_symbol or "", lot_size, rl_trade.entry_premium or 0,
+        )
+    except Exception:
+        pass
     return {"fired": True}
 
 
@@ -238,6 +251,29 @@ async def reconcile_closed_trades() -> dict:
                 st.gross_pnl_inr = round(gross, 2)
                 st.pnl_pct = round(rl.pnl_pct or 0, 3)
                 updated += 1
+
+                # Owner alert on close (Telegram, fire-and-forget) — P2b
+                try:
+                    from app.db import Strategy as _Strat, StrategyRun as _Run
+                    from app.digest import alert_trade_closed
+                    run_row = (await s.execute(
+                        select(_Run).where(_Run.id == st.run_id)
+                    )).scalar_one_or_none()
+                    strat_row = (await s.execute(
+                        select(_Strat).where(
+                            _Strat.id == st.strategy_id,
+                            _Strat.version == st.strategy_version,
+                        )
+                    )).scalar_one_or_none()
+                    if strat_row:
+                        await alert_trade_closed(
+                            strat_row.owner_id, strat_row.name,
+                            run_row.mode if run_row else "PAPER",
+                            (legs[0].get("symbol") if legs else "") or "",
+                            st.exit_reason or "CLOSED", float(st.gross_pnl_inr or 0),
+                        )
+                except Exception:
+                    pass
             except Exception as e:
                 log.exception("reconcile %s failed: %s", st.id, e)
         await s.commit()

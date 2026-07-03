@@ -254,7 +254,7 @@ class User(Base):
     display_name = Column(String, nullable=True)
     # Tiers: free | paid | algo
     # free  = 15-day trial, 10 strategy saves, 50 backtest runs, no paper/live
-    # paid  = $20/mo, unlimited saves + backtests, paper trading enabled
+    # paid  = ₹2,000/mo, unlimited saves + backtests, paper trading enabled
     # algo  = paid + live trading via Fyers
     tier = Column(String, default="free")
     is_active = Column(Boolean, default=True)

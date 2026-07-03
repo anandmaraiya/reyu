@@ -45,6 +45,10 @@ _PUBLIC_PATHS = [
     re.compile(r"^/api/orders/lot-sizes$"),   # static lookup table, no user data
     re.compile(r"^/api/catalog$"),            # public strategy catalog
     re.compile(r"^/api/legal/docs"),          # legal docs readable before signup (accept/status stay behind auth)
+    re.compile(r"^/api/templates$"),          # template gallery browsable anonymously
+    re.compile(r"^/api/templates/[^/]+$"),    # template preview (copy stays behind auth)
+    re.compile(r"^/api/creators/[^/]+$"),     # public creator profiles (display name + published strategies only)
+    re.compile(r"^/api/hooks/tv/"),           # TradingView webhooks — HMAC token in URL is the auth
     re.compile(r"^/api/strategies/[^/]+/followers$"),   # public follower count
     re.compile(r"^/api/ts/"),              # read-only time-series
     re.compile(r"^/api/backtest/"),        # historical replay (read-only)
