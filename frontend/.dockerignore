@@ -1,0 +1,8 @@
+# Build context hygiene — node_modules alone is ~140MB and npm's
+# transient .bin temp files (e.g. .rollup-xxxx) break buildkit's
+# context loader with "invalid file request". Dependencies are
+# installed inside the image; never ship the host's copy.
+node_modules
+dist
+.vite
+npm-debug.log*
