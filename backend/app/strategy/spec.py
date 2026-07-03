@@ -136,6 +136,11 @@ class EntryRules(BaseModel):
     trigger: TriggerType
     schedule: Schedule = Field(default_factory=Schedule)
     conditions: list[Condition] = []
+    # Approve-from-phone (task #75): when True, paper-live entries wait
+    # for the owner's Telegram Approve/Skip instead of firing
+    # automatically. No Telegram linked → falls back to auto-entry.
+    # Backtests ignore this (historical simulation can't ask).
+    require_approval: bool = False
 
     @model_validator(mode="after")
     def _conditional_needs_conditions(self):

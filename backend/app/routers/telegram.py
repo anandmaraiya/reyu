@@ -125,6 +125,30 @@ async def webhook(request: Request):
     if not BOT_TOKEN:
         raise HTTPException(503, "Telegram bot not configured (TELEGRAM_BOT_TOKEN missing)")
     body = await request.json()
+
+    # ── Inline-button taps (approve-from-phone, task #75) ─────────
+    cq = body.get("callback_query")
+    if cq:
+        data = cq.get("data") or ""
+        cq_chat = str(((cq.get("message") or {}).get("chat") or {}).get("id") or "")
+        # Acknowledge the tap so the client stops its spinner.
+        try:
+            async with httpx.AsyncClient(timeout=8) as c:
+                await c.post(f"{TG_API}/answerCallbackQuery",
+                             json={"callback_query_id": cq.get("id")})
+        except Exception:
+            pass
+        if data.startswith("apr:") and cq_chat:
+            _, aid, decision = (data.split(":") + ["", ""])[:3]
+            from app.approvals import resolve_approval
+            try:
+                outcome = await resolve_approval(aid, decision == "y", cq_chat)
+            except Exception as e:
+                log.exception("approval resolve failed: %s", e)
+                outcome = "Something went wrong resolving this — nothing was executed."
+            await _send_message(cq_chat, outcome)
+        return {"ok": True}
+
     msg = body.get("message") or body.get("edited_message") or {}
     chat = msg.get("chat") or {}
     chat_id = str(chat.get("id") or "")

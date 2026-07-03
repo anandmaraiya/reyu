@@ -106,7 +106,24 @@ async def tv_signal(strategy_id: str, token: str, request: Request):
         result: dict
         if action == "BUY":
             max_open = max(1, spec.risk.max_concurrent)
-            if len(open_pos) >= max_open:
+            if spec.entry_rules.require_approval:
+                # Approve-from-phone: park the external signal behind the
+                # owner's Telegram Approve/Skip (task #75).
+                from app.approvals import create_approval
+                aid = await create_approval(
+                    strat.owner_id, "EQUITY_PAPER_ENTRY",
+                    {"strategy_id": strat.id, "symbol": symbol},
+                    f"📡 TradingView signal for *{strat.name}*.\n"
+                    f"Buy {symbol.replace('NSE:', '')} (paper) at market? "
+                    f"Expires in 6h — no tap means no entry.",
+                )
+                if aid:
+                    result = {"ok": True, "pending_approval": aid,
+                              "note": "Entry parked for owner approval via Telegram."}
+                else:
+                    result = {"ok": False,
+                              "reason": "require_approval set but no Telegram linked"}
+            elif len(open_pos) >= max_open:
                 result = {"ok": False, "reason": "max_concurrent reached"}
             else:
                 price = await _ltp(symbol)

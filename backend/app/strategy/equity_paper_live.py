@@ -103,6 +103,60 @@ async def _ltp(symbol: str) -> float | None:
     return None
 
 
+async def execute_approved_entry(strategy_id: str) -> dict:
+    """Enter a paper position NOW for an approved equity strategy —
+    called by app.approvals when the owner taps Approve on Telegram.
+    Re-validates caps and price at execution time (the approval may be
+    hours old)."""
+    async with SessionLocal() as s:
+        from app.db import Strategy as _S
+        sub = (
+            select(_S.id, func.max(_S.version).label("v"))
+            .where(_S.id == strategy_id).group_by(_S.id).subquery()
+        )
+        strat = (await s.execute(
+            select(_S).join(sub, (_S.id == sub.c.id) & (_S.version == sub.c.v))
+        )).scalar_one_or_none()
+        if not strat:
+            return {"entered": False, "reason": "strategy not found"}
+        if strat.status != "PAPER_LIVE":
+            return {"entered": False, "reason": f"strategy is {strat.status}, not PAPER_LIVE"}
+
+        spec = StrategySpec.model_validate(json.loads(strat.spec))
+        run = await _ensure_run(s, strat)
+        open_pos = await _open_positions(s, run.id)
+        max_open = max(1, spec.risk.max_concurrent) \
+            if spec.entry_rules.trigger == "SCHEDULE" else 1
+        if len(open_pos) >= max_open:
+            return {"entered": False, "reason": "max_concurrent reached"}
+
+        symbol = spec.universe[0]
+        price = await _ltp(symbol)
+        if not price or price <= 0:
+            return {"entered": False, "reason": "no quote available"}
+        entry_px = price * (1 + FRICTION["slippage_pct"])
+        qty = int((spec.risk.max_position_inr or 50_000) // entry_px)
+        if qty < 1:
+            return {"entered": False, "reason": "position cap below one share"}
+
+        s.add(StrategyTrade(
+            id=str(uuid.uuid4()),
+            run_id=run.id, strategy_id=strat.id, strategy_version=strat.version,
+            entry_ts=datetime.utcnow(),
+            entry_signal=json.dumps({
+                "reason": "approved-entry", "engine": "equity_paper_live",
+                "peak_close": entry_px, "entry_date": date.today().isoformat(),
+            }),
+            legs=json.dumps([{
+                "leg_id": spec.legs[0].leg_id, "symbol": symbol, "action": "BUY",
+                "qty": qty, "entry_price": round(entry_px, 2),
+                "exit_price": None, "fees_inr": None,
+            }]),
+        ))
+        await s.commit()
+    return {"entered": True, "qty": qty, "price": round(entry_px, 2)}
+
+
 # ── Morning: evaluate yesterday's close, enter at today's price ─────
 async def morning_cycle() -> dict:
     """09:20 IST weekdays. Enter paper positions for equity strategies
@@ -156,6 +210,22 @@ async def morning_cycle() -> dict:
                 if not signal:
                     skipped += 1
                     continue
+
+                # Approve-from-phone (task #75): park the entry behind a
+                # Telegram Approve/Skip instead of firing. Falls through
+                # to auto-entry when the user has no Telegram linked.
+                if er.require_approval:
+                    from app.approvals import create_approval
+                    aid = await create_approval(
+                        strat.owner_id, "EQUITY_PAPER_ENTRY",
+                        {"strategy_id": strat.id, "symbol": symbol},
+                        f"📥 *{strat.name}* signalled an entry ({reason}).\n"
+                        f"Buy {symbol.replace('NSE:', '')} (paper) at market? "
+                        f"Expires in 6h — no tap means no entry.",
+                    )
+                    if aid:
+                        skipped += 1        # counted as skipped; entry happens on approve
+                        continue
 
                 price = await _ltp(symbol)
                 if not price or price <= 0:
