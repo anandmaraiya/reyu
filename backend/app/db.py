@@ -296,6 +296,26 @@ class ApiKey(Base):
     last_used_at = Column(DateTime, nullable=True)
 
 
+class AlgoRegistration(Base):
+    """SEBI retail-algo registration record (F-B1). One row per strategy;
+    the exchange-issued algo ID is recorded by superadmin once the broker
+    (Fyers) confirms registration with the exchange. Lifecycle:
+    REQUESTED -> REGISTERED | REJECTED. When
+    settings.enforce_algo_registration is on, LIVE promotion requires a
+    REGISTERED row, and live orders carry the algo ID as their order tag."""
+    __tablename__ = "algo_registrations"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    strategy_id = Column(String, nullable=False, unique=True, index=True)
+    owner_id = Column(String, nullable=False, index=True)
+    broker = Column(String, default="fyers")
+    exchange = Column(String, default="NSE")
+    status = Column(String, default="REQUESTED")   # REQUESTED | REGISTERED | REJECTED
+    exchange_algo_id = Column(String, nullable=True)
+    notes = Column(String, nullable=True)
+    requested_at = Column(DateTime, default=datetime.utcnow)
+    registered_at = Column(DateTime, nullable=True)
+
+
 class UserLegalAcceptance(Base):
     """Versioned record of a user accepting a legal/compliance document
     (Terms of Use, SEBI/NSE risk disclosure, execution authorization,
@@ -914,6 +934,22 @@ async def init_db() -> None:
             )
             """,
             "CREATE INDEX IF NOT EXISTS ix_legal_user_doc ON user_legal_acceptance (user_id, doc_type)",
+            # SEBI algo-ID registration (F-B1)
+            """
+            CREATE TABLE IF NOT EXISTS algo_registrations (
+                id VARCHAR PRIMARY KEY,
+                strategy_id VARCHAR NOT NULL UNIQUE,
+                owner_id VARCHAR NOT NULL,
+                broker VARCHAR DEFAULT 'fyers',
+                exchange VARCHAR DEFAULT 'NSE',
+                status VARCHAR DEFAULT 'REQUESTED',
+                exchange_algo_id VARCHAR,
+                notes VARCHAR,
+                requested_at TIMESTAMP DEFAULT NOW(),
+                registered_at TIMESTAMP
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_algoreg_owner ON algo_registrations (owner_id)",
             """
             CREATE TABLE IF NOT EXISTS option_intraday (
                 ts TIMESTAMP NOT NULL,

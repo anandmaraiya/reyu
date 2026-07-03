@@ -19,6 +19,7 @@ import LegalAcceptModal from '../components/LegalAcceptModal'
 import RiskNote from '../components/RiskNote'
 import StrategyJourney from '../components/StrategyJourney'
 import WalkForwardPanel from '../components/WalkForwardPanel'
+import RiskSimPanel from '../components/RiskSimPanel'
 import type { LegalDocMeta } from '../legal'
 import { chartTooltipStyles } from '../chartTheme'
 
@@ -269,6 +270,7 @@ export default function StrategyDetail() {
                 selectedRunId={selectedRunId}
                 onSelectRun={setSelectedRunId}
               />
+              <RiskSimPanel runId={selRun?.id || null} />
               <WalkForwardPanel strategyId={strat.id} />
             </>
           )}

@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     # in .env, e.g. CORS_ORIGINS=http://34.93.12.45:5173,https://reyu.example.com
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
+    # SEBI retail-algo framework (F-B1). When True, LIVE promotion
+    # requires an exchange-REGISTERED algo ID for the strategy. Default
+    # off until the broker-side registration process is confirmed with
+    # Fyers + counsel — the rails exist so flipping this is a one-line
+    # .env change, not a retrofit.
+    enforce_algo_registration: bool = False
+
     # Razorpay billing
     razorpay_key_id: str = ""
     razorpay_key_secret: str = ""

@@ -312,6 +312,19 @@ async def promote_strategy(
         from app.legal import PLATFORM_DOCS, LIVE_DOCS
         await require_acceptance(owner, PLATFORM_DOCS + LIVE_DOCS)
 
+        # SEBI algo-ID gate (F-B1) — flag-gated until the broker-side
+        # registration process is confirmed; flipping the .env flag makes
+        # this mandatory with zero code change.
+        from app.config import settings as _settings
+        if _settings.enforce_algo_registration:
+            from app.routers.algo_reg import registered_algo_id
+            if not await registered_algo_id(strategy_id):
+                raise HTTPException(400,
+                    "This strategy needs an exchange-registered algo ID before "
+                    "LIVE deployment (SEBI retail-algo framework). Request "
+                    "registration from the strategy page; we'll notify you when "
+                    "the exchange confirms.")
+
     if row.status not in ("BACKTESTED", "PAPER_LIVE"):
         raise HTTPException(409,
             f"Can't promote from `{row.status}`. Backtest the strategy first.")
@@ -655,6 +668,103 @@ async def get_walkforward(request: Request, group_id: str):
     if summary is None:
         raise HTTPException(404, "Walk-forward group not found")
     return summary
+
+
+# ── Risk simulator (F-B13) ──────────────────────────────────────────
+@router.get("/runs/{run_id}/risk-sim")
+async def risk_simulator(
+    request: Request,
+    run_id: str,
+    capital: float = Query(100_000, ge=10_000, le=100_000_000),
+    s: AsyncSession = Depends(get_session),
+):
+    """'What would the worst stretch of ₹<capital> in this run have felt
+    like?' — scales the run's trade P&L to the chosen capital and reports
+    the painful facts: worst day/week, worst trade, longest losing
+    streak, max drawdown in rupees. Educational framing only; the
+    endpoint describes THIS historical run, never the future.
+    Layer 2: ownership via run.owner_id."""
+    owner = _owner(request)
+    run = (await s.execute(
+        select(StrategyRun).where(
+            StrategyRun.id == run_id, StrategyRun.owner_id == owner)
+    )).scalar_one_or_none()
+    if not run:
+        raise HTTPException(404, "Run not found")
+
+    trades = (await s.execute(
+        select(StrategyTrade).where(
+            StrategyTrade.run_id == run_id,
+            StrategyTrade.exit_ts.isnot(None),
+        ).order_by(StrategyTrade.exit_ts)
+    )).scalars().all()
+    if not trades:
+        return {"run_id": run_id, "capital": capital, "trades": 0,
+                "note": "No closed trades in this run yet."}
+
+    params = json.loads(run.params or "{}")
+    base_capital = float(params.get("starting_capital") or 100_000)
+    scale = capital / base_capital
+
+    def pnl(t) -> float:
+        raw = t.net_pnl_inr if t.net_pnl_inr is not None else (t.gross_pnl_inr or 0)
+        return float(raw) * scale
+
+    # Daily buckets + rolling 7-calendar-day worst window
+    from collections import defaultdict
+    daily: dict = defaultdict(float)
+    for t in trades:
+        daily[t.exit_ts.date()] += pnl(t)
+    days = sorted(daily)
+    worst_day = min(daily.values())
+    best_day = max(daily.values())
+    worst_week, best_week = 0.0, 0.0
+    for i, d in enumerate(days):
+        window = sum(daily[e] for e in days[i:] if (e - d).days < 7)
+        worst_week = min(worst_week, window)
+        best_week = max(best_week, window)
+
+    # Losing streak + max drawdown in ₹
+    streak = worst_streak = 0
+    streak_loss = worst_streak_loss = 0.0
+    equity, peak, max_dd = capital, capital, 0.0
+    worst_trade = 0.0
+    for t in trades:
+        p = pnl(t)
+        worst_trade = min(worst_trade, p)
+        equity += p
+        peak = max(peak, equity)
+        max_dd = max(max_dd, peak - equity)
+        if p < 0:
+            streak += 1
+            streak_loss += -p
+            if streak > worst_streak or (streak == worst_streak and streak_loss > worst_streak_loss):
+                worst_streak, worst_streak_loss = streak, streak_loss
+        else:
+            streak, streak_loss = 0, 0.0
+
+    return {
+        "run_id": run_id,
+        "capital": capital,
+        "trades": len(trades),
+        "period_days": (trades[-1].exit_ts.date() - trades[0].entry_ts.date()).days + 1,
+        "worst_day_inr": round(worst_day, 2),
+        "worst_week_inr": round(worst_week, 2),
+        "best_week_inr": round(best_week, 2),
+        "best_day_inr": round(best_day, 2),
+        "worst_single_trade_inr": round(worst_trade, 2),
+        "longest_losing_streak": worst_streak,
+        "losing_streak_loss_inr": round(-worst_streak_loss, 2),
+        "max_drawdown_inr": round(-max_dd, 2),
+        "final_equity_inr": round(equity, 2),
+        "note": (
+            f"With ₹{capital:,.0f}, this run's worst stretch would have meant "
+            f"sitting through ₹{max_dd:,.0f} of drawdown and "
+            f"{worst_streak} losses in a row. Historical facts about this run — "
+            "not a prediction. If that number would make you abandon the "
+            "strategy, size down before deploying."
+        ),
+    }
 
 
 # ── GET /api/strategies/runs/{run_id} ─────────────────────────────

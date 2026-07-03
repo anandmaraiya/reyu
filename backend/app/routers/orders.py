@@ -37,6 +37,10 @@ class OrderRequest(BaseModel):
     side: Literal["BUY", "SELL"]
     order_type: Literal["MARKET", "LIMIT", "SL", "SL-M"] = "MARKET"
     product: Literal["INTRADAY", "CNC", "MARGIN", "BO", "CO"] = "INTRADAY"
+    # SEBI algo tagging (F-B1): exchange-issued algo ID travels on the
+    # order as Fyers' orderTag. Strategy-driven live orders set this from
+    # the strategy's REGISTERED algo registration.
+    order_tag: str | None = None
     limit_price: float = 0
     stop_price: float = 0
     take_profit: float = 0          # BO only
@@ -157,6 +161,8 @@ async def place(req: OrderRequest, user: dict = Depends(_require_live_tier),
         "stopLoss": req.stop_loss,
         "takeProfit": req.take_profit,
     }
+    if req.order_tag:
+        payload["orderTag"] = req.order_tag
 
     if req.dry_run:
         return {

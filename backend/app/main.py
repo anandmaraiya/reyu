@@ -172,6 +172,9 @@ app.include_router(_creators.router)       # prefix="/api/creators" — public c
 from app.routers import tv_hooks as _tv
 app.include_router(_tv.router)             # prefix="/api/hooks/tv" — TradingView signal webhooks
 app.include_router(_tv.owner_router)       # prefix="/api/strategies" — owner hook-URL fetch
+from app.routers import algo_reg as _algo
+app.include_router(_algo.router)           # prefix="/api/strategies" — SEBI algo-ID registration (F-B1)
+app.include_router(_algo.admin_router)     # prefix="/api/admin/algo-registrations"
 
 
 @app.get("/api/health")
