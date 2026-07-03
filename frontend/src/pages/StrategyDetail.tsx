@@ -18,6 +18,7 @@ import PreflightPanel from '../components/PreflightPanel'
 import LegalAcceptModal from '../components/LegalAcceptModal'
 import RiskNote from '../components/RiskNote'
 import StrategyJourney from '../components/StrategyJourney'
+import WalkForwardPanel from '../components/WalkForwardPanel'
 import type { LegalDocMeta } from '../legal'
 import { chartTooltipStyles } from '../chartTheme'
 
@@ -259,12 +260,15 @@ export default function StrategyDetail() {
         <div style={{ padding: 14 }}>
           {tab === 'recipe' && <RecipeTab spec={strat.spec} />}
           {tab === 'performance' && (
-            <PerformanceTab
-              run={selRun}
-              runs={runsList || []}
-              selectedRunId={selectedRunId}
-              onSelectRun={setSelectedRunId}
-            />
+            <>
+              <PerformanceTab
+                run={selRun}
+                runs={runsList || []}
+                selectedRunId={selectedRunId}
+                onSelectRun={setSelectedRunId}
+              />
+              <WalkForwardPanel strategyId={strat.id} />
+            </>
           )}
           {tab === 'runs' && (
             <RunsTab

@@ -70,13 +70,15 @@ FRICTION = {
 
 
 def _friction_inr(entry_px: float, exit_px: float, qty: int) -> float:
+    """Statutory + broker charges only. Slippage is NOT included here —
+    it's already embedded in the fill prices (entry marked up, exit
+    marked down by slippage_pct), so adding it again would double-count."""
     buy_val, sell_val = entry_px * qty, exit_px * qty
     stt = (buy_val + sell_val) * FRICTION["stt_pct"]
     stamp = buy_val * FRICTION["stamp_buy_pct"]
     exch = (buy_val + sell_val) * FRICTION["exchange_pct"]
-    slip = (buy_val + sell_val) * FRICTION["slippage_pct"]
     gst = (FRICTION["brokerage_per_trade"] + exch) * FRICTION["gst_pct"]
-    return stt + stamp + exch + slip + gst + FRICTION["dp_per_sell"]
+    return stt + stamp + exch + gst + FRICTION["dp_per_sell"]
 
 
 def _to_daily(candles: list) -> list[list[float]]:
@@ -212,6 +214,10 @@ async def execute_equity_run_inner(run_id: str) -> None:
     er, xr, risk = spec.entry_rules, spec.exit_rules, spec.risk
     max_open = max(1, risk.max_concurrent) if er.trigger == "SCHEDULE" else 1
     day_codes = {0: "MON", 1: "TUE", 2: "WED", 3: "THU", 4: "FRI"}
+    # Per-run fill slippage (F-B7 sensitivity analysis) — defaults to the
+    # standard model. Applied on entry (mark-up) and exit (mark-down).
+    slip = float(params.get("slippage_pct") if params.get("slippage_pct")
+                 is not None else FRICTION["slippage_pct"])
 
     open_pos: list[EqTrade] = []
     closed: list[EqTrade] = []
@@ -233,7 +239,7 @@ async def execute_equity_run_inner(run_id: str) -> None:
 
         # ── 1. Fill pending entry at today's open ──────────────────
         if pending_entry and len(open_pos) < max_open:
-            entry_px = o * (1 + FRICTION["slippage_pct"])
+            entry_px = o * (1 + slip)
             budget = min(risk.max_position_inr or available, available)
             qty = int(budget // entry_px) if entry_px > 0 else 0
             if qty >= 1:
@@ -271,7 +277,7 @@ async def execute_equity_run_inner(run_id: str) -> None:
 
             if exit_px is not None:
                 p.exit_idx, p.exit_unix = i, int(ts)
-                p.exit_px = exit_px * (1 - FRICTION["slippage_pct"])
+                p.exit_px = exit_px * (1 - slip)
                 p.status = status
                 available += p.exit_px * p.qty
                 if p.net_pnl < 0:
@@ -302,7 +308,7 @@ async def execute_equity_run_inner(run_id: str) -> None:
     for p in open_pos:
         p.exit_idx = len(candles) - 1
         p.exit_unix = int(last[0])
-        p.exit_px = last[4] * (1 - FRICTION["slippage_pct"])
+        p.exit_px = last[4] * (1 - slip)
         p.status = "EOP"
         available += p.exit_px * p.qty
         closed.append(p)

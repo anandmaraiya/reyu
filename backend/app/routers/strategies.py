@@ -544,6 +544,57 @@ async def start_run(
     return {"ok": True, "run_id": run_id, "status": "RUNNING"}
 
 
+# ── Walk-forward analysis (F-B7) ───────────────────────────────────
+@router.post("/{strategy_id}/walkforward")
+async def start_walkforward_analysis(
+    request: Request,
+    strategy_id: str,
+    background: BackgroundTasks,
+    period_start: str = Query(..., description="ISO date"),
+    period_end: str = Query(..., description="ISO date"),
+    windows: int = Query(4, ge=2, le=8),
+    starting_capital: float = Query(100_000, ge=10_000, le=10_000_000),
+    slippage_pct: float | None = Query(None, ge=0, le=0.05,
+        description="Fill-slippage override for sensitivity analysis"),
+    s: AsyncSession = Depends(get_session),
+):
+    """Split the period into N contiguous windows and backtest each
+    independently — dispersion across windows exposes regime-dependence
+    a single full-period backtest hides. Layer 1: any authed tier.
+    Layer 2: ownership (via run creation). Windows run sequentially in
+    the background; poll GET /walkforward/{group_id}."""
+    owner = _owner(request)
+    v = await _latest_version(s, strategy_id)
+    if v is None:
+        raise HTTPException(404, "Strategy not found")
+    from datetime import date as _date
+    from app.strategy.walkforward import start_walkforward, execute_walkforward
+    try:
+        result = await start_walkforward(
+            strategy_id=strategy_id, strategy_version=v, owner_id=owner,
+            period_start=_date.fromisoformat(period_start),
+            period_end=_date.fromisoformat(period_end),
+            windows=windows, starting_capital=starting_capital,
+            slippage_pct=slippage_pct,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    background.add_task(execute_walkforward, result["run_ids"])
+    return {"ok": True, **result, "status": "RUNNING"}
+
+
+@router.get("/walkforward/{group_id}")
+async def get_walkforward(request: Request, group_id: str):
+    """Per-window metrics + dispersion stats for a walk-forward group.
+    Layer 2: owner-scoped query — you only ever see your own groups."""
+    owner = _owner(request)
+    from app.strategy.walkforward import group_summary
+    summary = await group_summary(group_id, owner)
+    if summary is None:
+        raise HTTPException(404, "Walk-forward group not found")
+    return summary
+
+
 # ── GET /api/strategies/runs/{run_id} ─────────────────────────────
 @router.get("/runs/{run_id}")
 async def get_run(

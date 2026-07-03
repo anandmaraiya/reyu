@@ -169,10 +169,16 @@ async def _execute_run_inner(run_id: str) -> None:
         all_trades.extend(day_trades)
 
     # ── ROI w/ realistic friction (closes NU-12b) ──────────────────
+    # Slippage is overridable per run (F-B7 walk-forward sensitivity
+    # analysis); default stays compute_roi's realistic 0.3%.
+    _roi_kwargs = {}
+    if params.get("slippage_pct") is not None:
+        _roi_kwargs["slippage_pct"] = float(params["slippage_pct"])
     roi = compute_roi(
         all_trades,
         starting_capital=capital,
         lot_size=lot_size,
+        **_roi_kwargs,
     )
 
     metrics = _summary_metrics(all_trades, roi)
