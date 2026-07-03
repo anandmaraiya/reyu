@@ -119,7 +119,8 @@ async def chat_with_claude(
                 "system": system_prompt,
                 "messages": messages,
                 "tools": tools,
-                "temperature": 0.2,
+                # No sampling params: temperature/top_p/top_k are removed on
+                # Opus 4.7+ and the API rejects them with a 400.
             }
             try:
                 r = await client.post(ANTHROPIC_URL, headers=headers, json=payload)
