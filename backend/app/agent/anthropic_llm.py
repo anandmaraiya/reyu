@@ -10,6 +10,7 @@ model → … until stop_reason is `end_turn`.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -122,15 +123,32 @@ async def chat_with_claude(
                 # No sampling params: temperature/top_p/top_k are removed on
                 # Opus 4.7+ and the API rejects them with a 400.
             }
-            try:
-                r = await client.post(ANTHROPIC_URL, headers=headers, json=payload)
-            except Exception as e:
-                log.exception("Anthropic call failed")
-                return {"text": f"LLM call failed: {e}"}
+            # Transient-failure retry: 429 (rate limit) and 529 (overloaded)
+            # are not config errors — honor Retry-After and back off a few
+            # times before giving up, so a burst doesn't surface as a hard
+            # failure to the user.
+            r = None
+            for attempt in range(4):
+                try:
+                    r = await client.post(ANTHROPIC_URL, headers=headers, json=payload)
+                except Exception as e:
+                    log.exception("Anthropic call failed")
+                    return {"text": f"LLM call failed: {e}"}
+                if r.status_code not in (429, 529):
+                    break
+                retry_after = r.headers.get("retry-after")
+                delay = float(retry_after) if retry_after and retry_after.replace(".", "", 1).isdigit() else min(2 ** attempt, 8)
+                log.warning("Anthropic %d (attempt %d) — backing off %.1fs", r.status_code, attempt + 1, delay)
+                if attempt < 3:
+                    await asyncio.sleep(delay)
 
             if r.status_code != 200:
                 log.warning("Anthropic %d: %s", r.status_code, r.text[:400])
-                return {"text": f"LLM returned {r.status_code}. Check ANTHROPIC_API_KEY and model name."}
+                if r.status_code in (429, 529):
+                    return {"text": "Reyu's getting a lot of requests right now — give me a few seconds and ask again."}
+                if r.status_code in (401, 403):
+                    return {"text": "Reyu's AI service isn't configured correctly (auth). This is on us — please try again shortly."}
+                return {"text": f"Reyu hit a snag reaching its AI service (error {r.status_code}). Please try again in a moment."}
 
             body = r.json()
             content_blocks = body.get("content") or []

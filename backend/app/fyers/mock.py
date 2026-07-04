@@ -29,12 +29,47 @@ DEMO_SPOT = {
     "NSE:ICICIBANK-EQ": 1340,
 }
 
+# Alias-tolerant spot lookup keyed on the *underlying scrip* (exchange +
+# segment stripped). Callers pass BANKNIFTY under several spellings
+# (NSE:NIFTYBANK-INDEX, NSE:BANKNIFTY-INDEX, bare BANKNIFTY); keying on the
+# bare scrip means every spelling lands on the same, correct demo price
+# instead of silently falling through to the NIFTY default.
+_UNDERLYING_SPOT = {
+    "NIFTY": 24800, "NIFTY50": 24800,
+    "NIFTYBANK": 53200, "BANKNIFTY": 53200,
+    "FINNIFTY": 26500,
+    "MIDCPNIFTY": 13200, "MIDCPNIFTY50": 13200,
+    "NIFTYNXT50": 68000,
+    "SENSEX": 81100,
+    "BANKEX": 62000,
+    "RELIANCE": 1230, "HDFCBANK": 1690, "INFY": 1820, "TCS": 4150, "ICICIBANK": 1340,
+}
+
+
+def _scrip(symbol: str) -> str:
+    """Bare underlying scrip: 'NSE:BANKNIFTY-INDEX' -> 'BANKNIFTY'."""
+    return symbol.strip().upper().split(":")[-1].replace("-INDEX", "").replace("-EQ", "")
+
+
+def demo_spot(symbol: str) -> float:
+    """Alias-tolerant demo spot. Never returns the misleading flat NIFTY
+    default for an unrecognized symbol — unknown scrips get a deterministic
+    per-symbol price so a 'stock' never masquerades as a 24,800 index."""
+    s = symbol.strip().upper()
+    if s in DEMO_SPOT:                       # exact canonical key
+        return DEMO_SPOT[s]
+    core = _scrip(s)
+    if core in _UNDERLYING_SPOT:             # alias-tolerant scrip match
+        return _UNDERLYING_SPOT[core]
+    r = _seed_for(s)                         # deterministic unknown-symbol spot
+    return round(1000 + r.uniform(-200, 3000), 2)
+
 
 def mock_quotes(symbols: list[str]) -> dict[str, Any]:
     out = []
     for s in symbols:
         r = _seed_for(s)
-        spot = DEMO_SPOT.get(s, 1000 + r.uniform(-50, 200))
+        spot = demo_spot(s)
         out.append({"n": s, "s": "ok", "v": {"lp": round(spot, 2),
                                               "ch": round(r.uniform(-spot * 0.005, spot * 0.005), 2),
                                               "chp": round(r.uniform(-0.5, 0.5), 2)}})
@@ -52,9 +87,16 @@ def _bs_call(S, K, T, sigma):
 
 def mock_option_chain(symbol: str, strikecount: int = 25) -> dict[str, Any]:
     r = _seed_for(symbol)
-    spot = DEMO_SPOT.get(symbol, 24800)
-    # spacing 50 for nifty, 100 for banknifty, 1% of price for stocks
-    spacing = 50 if "NIFTY50" in symbol else 100 if "BANK" in symbol else max(round(spot * 0.005, 0), 1)
+    spot = demo_spot(symbol)
+    # Strike spacing per contract: NIFTY 50, BANKNIFTY/SENSEX/BANKEX 100,
+    # FINNIFTY 50, stocks ~0.5% of price.
+    _core = _scrip(symbol)
+    if _core in ("NIFTY", "NIFTY50", "FINNIFTY"):
+        spacing = 50
+    elif "BANK" in _core or _core in ("SENSEX", "BANKEX"):
+        spacing = 100
+    else:
+        spacing = max(round(spot * 0.005, 0), 1)
     atm = round(spot / spacing) * spacing
     expiry_dt = datetime.utcnow() + timedelta(days=7 - datetime.utcnow().weekday())
     expiry_ts = int(expiry_dt.timestamp())
@@ -103,7 +145,7 @@ def mock_option_chain(symbol: str, strikecount: int = 25) -> dict[str, Any]:
 
 def mock_history(symbol: str, resolution: str, _from: str, _to: str) -> dict[str, Any]:
     r = _seed_for(symbol + resolution)
-    spot = DEMO_SPOT.get(symbol, 24800)
+    spot = demo_spot(symbol)
     ts = int(datetime.utcnow().timestamp())
     step = 60 if resolution == "1" else 300 if resolution == "5" else 900
     candles = []
