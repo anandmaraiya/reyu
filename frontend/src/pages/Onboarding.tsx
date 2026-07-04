@@ -356,31 +356,20 @@ export default function Onboarding() {
           {step === 3 && (
             <>
               <div style={S.stepLabel}>Step 3 of 4</div>
-              <h1 style={S.title}>The strategy we run for you</h1>
+              <h1 style={S.title}>How strategies work here</h1>
               <p style={S.hint}>
-                The regime router picks between long-call, long-put, and iron-condor
-                every morning at 09:25 IST based on yesterday's PCR + 3-day momentum,
-                then closes strictly at 15:20 IST. Backtest on 6 years (2019–2024):
+                You build your own strategies — from a template, in the builder, or
+                with Reyu's help in chat. Every strategy follows the same path:
+                backtest on real historical data, forward-test on paper with
+                simulated fills, and go live only when you explicitly promote it.
               </p>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 20 }}>
-                <div style={S.statTile}>
-                  <div style={S.statLabel}>ROI</div>
-                  <div style={{ ...S.statValue, color: 'var(--brand-primary)' }}>+975%</div>
-                </div>
-                <div style={S.statTile}>
-                  <div style={S.statLabel}>Win rate</div>
-                  <div style={S.statValue}>67.8%</div>
-                </div>
-                <div style={S.statTile}>
-                  <div style={S.statLabel}>Max DD</div>
-                  <div style={S.statValue}>9.5%</div>
-                </div>
-              </div>
-
               <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 24 }}>
-                6 years of NIFTY, 543 trades, ₹1L → ₹10.75L on paper. Live starts
-                as paper-trading — real-money mode requires an Algo plan and Fyers connected.
+                Nothing trades until you start it. Reyu doesn't give investment
+                advice, doesn't rank strategies by performance, and past or
+                simulated results don't predict future outcomes. Real-money mode
+                additionally requires an Algo plan, a connected broker, and your
+                signed execution authorization.
               </p>
 
               <div style={S.row}>
@@ -398,8 +387,8 @@ export default function Onboarding() {
               </h1>
               <p style={S.hint}>
                 {traderType === 'HNI'
-                  ? `Your HNI account has elevated position limits, priority Fyers pooling during peak load, and access to our concierge onboarding team. Tomorrow at 09:25 IST, the regime router opens its next paper trade on your account. Any questions during the first week, reply to your welcome email — a real human will get back to you within 4 hours.`
-                  : `Tomorrow at 09:25 IST, the regime router opens its next paper trade on your account. You'll see the decision, entry prices, and live P&L on the dashboard. No action needed from you overnight.`
+                  ? `Your HNI account has elevated position limits, priority Fyers pooling during peak load, and access to our concierge onboarding team. Next step: copy a template or build your own strategy, backtest it, and paper-trade it when you're ready. Any questions during the first week, reply to your welcome email — a real human will get back to you within 4 hours.`
+                  : `Next step: pick a template that matches your style (or build your own), run a backtest on real data, and start a paper run when you're ready. Everything you start shows its decisions, entry prices, and live P&L on the dashboard.`
                 }
               </p>
 
@@ -408,7 +397,7 @@ export default function Onboarding() {
                 border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)',
                 fontSize: 13, marginBottom: 24, color: 'var(--text-secondary)',
               }}>
-                <strong style={{ color: 'var(--text-primary)' }}>Every morning:</strong> re-authenticate Fyers (their token expires in 24h). Everything else runs on autopilot.
+                <strong style={{ color: 'var(--text-primary)' }}>Every morning:</strong> re-authenticate Fyers (their token expires in 24h). Strategies you've started keep running on their own schedules.
               </div>
 
               <div style={S.row}>
