@@ -167,11 +167,15 @@ async def fetch_daily_candles(
 
     if len(candles) < min_days:
         from app.fyers import cache as _cache
-        cached = await _cache.get_candles(
-            symbol, resolution="D",
+        # SQL-side daily rollup — get_candles(resolution="D") pulls every
+        # 1-min row into Python and is catastrophically slow for a liquid
+        # equity (100k+ bars → ~2 min). get_daily_candles returns the ~250
+        # daily bars already aggregated.
+        cached = await _cache.get_daily_candles(
+            symbol,
             range_from=fetch_from.isoformat(), range_to=fetch_to.isoformat(),
         )
-        fallback = _to_daily(cached.get("candles") or [])
+        fallback = cached.get("candles") or []   # already daily
         if len(fallback) > len(candles):
             candles, source = fallback, "TICK1M_RESAMPLED_DAILY"
 

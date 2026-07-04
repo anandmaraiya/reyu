@@ -184,10 +184,19 @@ async def chat_with_claude(
                         chart_post = result["chart_post"]
                     if data is None and result.get("data"):
                         data = result["data"]
+                    # Feed BOTH the summary text and the structured data back
+                    # to the model. The analysis skills (equity/indicator/
+                    # chain) return their real numbers in `data`; without it
+                    # the model only sees a one-line summary and correctly
+                    # refuses to state levels it can't see, so the skill looks
+                    # broken. `data` also still flows to the frontend cards.
+                    content = result.get("text") or ""
+                    if result.get("data") is not None:
+                        content += "\n\nDATA (JSON):\n" + json.dumps(result["data"], default=str)
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tu.get("id"),
-                        "content": (result.get("text") or "")[:2000],
+                        "content": content[:8000],
                     })
                 messages.append({"role": "user", "content": tool_results})
                 continue

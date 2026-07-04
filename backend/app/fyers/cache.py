@@ -24,7 +24,7 @@ import logging
 from datetime import datetime, date, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db import SessionLocal, Tick1m, OptionStrikeSnapshot, OptionEod
@@ -130,6 +130,57 @@ async def get_candles(
         ],
         "source": SOURCE_L1_FORWARD if not missing_days else "L1_FORWARD_WITH_FYERS_BACKFILL",
     }
+
+
+async def get_daily_candles(
+    symbol: str,
+    range_from: str,
+    range_to: str,
+) -> dict[str, Any]:
+    """Daily OHLCV resampled from `tick_1m` **in SQL** — one row per NSE
+    session, not the raw 1-minute stream.
+
+    `get_candles(resolution="D")` materializes every 1-minute row (100k+
+    for a liquid stock over a year) into Python and resamples there, which
+    took ~2 minutes for a single equity-analysis chat turn. This does the
+    OHLCV rollup in Postgres and returns ~250 daily rows, so the equity /
+    indicator skills answer in well under a second. Days are grouped on the
+    IST calendar date to match `_to_daily`; open/close are the first/last
+    bar of each session. No Fyers backfill — reads whatever is cached."""
+    try:
+        d_from = datetime.fromisoformat(range_from).date()
+        d_to = datetime.fromisoformat(range_to).date()
+    except ValueError:
+        return {"candles": [], "source": SOURCE_L1_FORWARD}
+
+    q = text(
+        """
+        SELECT
+            min(ts)                                  AS ts_min,
+            (array_agg("open"  ORDER BY ts ASC))[1]  AS o,
+            max(high)                                AS h,
+            min(low)                                 AS l,
+            (array_agg(close   ORDER BY ts DESC))[1] AS c,
+            sum(volume)                              AS v
+        FROM tick_1m
+        WHERE symbol = :sym AND ts >= :f AND ts < :t
+        GROUP BY ((ts AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date)
+        ORDER BY min(ts)
+        """
+    )
+    async with SessionLocal() as s:
+        res = (await s.execute(q, {
+            "sym": symbol,
+            "f": datetime.combine(d_from, datetime.min.time()),
+            "t": datetime.combine(d_to + timedelta(days=1), datetime.min.time()),
+        })).all()
+
+    candles = [
+        [int(r.ts_min.timestamp()), float(r.o), float(r.h), float(r.l),
+         float(r.c), int(r.v or 0)]
+        for r in res
+    ]
+    return {"candles": candles, "source": SOURCE_L1_FORWARD}
 
 
 # ── Strike data priority resolver (Sprint 0.2b) ────────────────────
