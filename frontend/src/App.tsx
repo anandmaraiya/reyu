@@ -31,6 +31,8 @@ import './styles.css'          // Legacy component styles (kept for existing pag
 // ── Page lazy imports ────────────────────────────────────────────────────────
 // Default route
 const Chat           = lazy(() => import('./pages/Chat'))
+const Login          = lazy(() => import('./pages/Login'))
+const TrainingLab    = lazy(() => import('./pages/TrainingLab'))
 const DataAdmin      = lazy(() => import('./pages/DataAdmin'))
 const ResetPassword  = lazy(() => import('./pages/ResetPassword'))
 const Onboarding     = lazy(() => import('./pages/Onboarding'))
@@ -129,6 +131,10 @@ function AppShell() {
                 <Route path="/"           element={<Chat />} />
                 <Route path="/agent"      element={<Navigate to="/" replace />} />
 
+                {/* Auth pages — standalone (GateModal handles in-context auth) */}
+                <Route path="/login"      element={<Login />} />
+                <Route path="/register"   element={<Login />} />
+
                 {/* Price terminal vs option-chain terminal — distinct jobs */}
                 <Route path="/charts"     element={<PriceCharts />} />
                 <Route path="/chain"      element={<Dashboard />} />
@@ -164,13 +170,14 @@ function AppShell() {
                 <Route path="/templates"      element={<Templates />} />
                 <Route path="/creators/:id"   element={<Creator />} />
 
-                {/* RL dashboard */}
+                {/* RL dashboard + training lab */}
                 <Route path="/rl"         element={<RL />} />
+                <Route path="/rl/lab"     element={<TrainingLab />} />
+                <Route path="/lab"        element={<Navigate to="/rl/lab" replace />} />
 
                 {/* Legacy redirects */}
                 <Route path="/dashboard"    element={<Navigate to="/charts" replace />} />
                 <Route path="/chat"         element={<Navigate to="/" replace />} />
-                <Route path="/login"        element={<Navigate to="/" replace />} />
                 <Route path="/subscription" element={<Navigate to="/subscribe" replace />} />
                 <Route path="/saved"        element={<Navigate to="/strategies" replace />} />
                 <Route path="/audit"        element={<Navigate to="/orders" replace />} />

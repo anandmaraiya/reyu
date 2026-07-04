@@ -349,6 +349,7 @@ export default function RL() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <span className="rl-refresh-hint">Auto-refresh 30s</span>
             <div className="rl-actions">
+              <a className="rl-btn" href="/rl/lab" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>🧪 Training Lab</a>
               <button className="rl-btn" onClick={decideNow}>▶ Decide Now</button>
               <button className="rl-btn primary" onClick={trainNow}>⚡ Train</button>
             </div>
