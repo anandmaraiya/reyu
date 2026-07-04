@@ -101,8 +101,14 @@ async def chat_with_claude(
     # or [{"type": "tool_use", ...}] / [{"type": "tool_result", ...}] for tools.
     messages: list[dict] = []
     for h in (history or [])[-10:]:
-        if h.get("role") in ("user", "assistant") and h.get("content"):
-            messages.append({"role": h["role"], "content": h["content"]})
+        content = h.get("content")
+        # Anthropic rejects empty / whitespace-only text blocks (400). Only
+        # forward real turns; skip anything blank in the stored history.
+        if h.get("role") in ("user", "assistant") and isinstance(content, str) and content.strip():
+            messages.append({"role": h["role"], "content": content})
+    user_message = (user_message or "").strip()
+    if not user_message:
+        return {"text": "What would you like to look at?"}
     messages.append({"role": "user", "content": user_message})
 
     tools = _tool_spec()

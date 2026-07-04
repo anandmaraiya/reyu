@@ -16,6 +16,7 @@ Session memory:
 from __future__ import annotations
 
 import base64
+import logging
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -30,6 +31,7 @@ from app.routers.user_auth import get_current_user
 from app.store import store
 
 router = APIRouter()
+log = logging.getLogger("reyu.chat")
 
 SESSION_TTL = 7 * 86400
 MAX_HISTORY = 50
@@ -155,6 +157,24 @@ async def chat(
         )
 
     sid = req.session_id or str(uuid.uuid4())
+
+    # ── Input hygiene ────────────────────────────────────────────────────
+    # Empty / whitespace-only messages would send an empty user turn to the
+    # model (Anthropic 400) — answer locally instead, spending no tokens.
+    msg = (req.message or "").strip()
+    if not msg:
+        return ChatResponse(
+            session_id=sid,
+            text="What would you like to look at? Ask about a symbol, an option chain, a strategy idea — or anything else.",
+            ts=datetime.utcnow().isoformat(),
+        )
+    # Cap absurdly long prompts so one paste can't blow the token budget or
+    # trip a 413. 8k chars is ~2k tokens — plenty for any real question.
+    MAX_CHARS = 8000
+    if len(msg) > MAX_CHARS:
+        msg = msg[:MAX_CHARS] + "\n\n[message truncated]"
+    req.message = msg
+
     await _save_message(sid, "user", req.message)
 
     # Load the plan for this session — injected into the LLM system prompt
@@ -181,15 +201,31 @@ async def chat(
         chat_session_id=sid,
     )
 
-    if claude_llm.is_enabled():
-        result = await claude_llm.chat_with_claude(req.message, **common_kwargs)
-        tool_used = "claude"
-        tool_args_used = None
-    elif agent_llm.is_enabled():
-        result = await agent_llm.chat_with_llm(req.message, **common_kwargs)
-        tool_used = "llm"
-        tool_args_used = None
-    else:
+    try:
+        if claude_llm.is_enabled():
+            result = await claude_llm.chat_with_claude(req.message, **common_kwargs)
+            tool_used = "claude"
+            tool_args_used = None
+        elif agent_llm.is_enabled():
+            result = await agent_llm.chat_with_llm(req.message, **common_kwargs)
+            tool_used = "llm"
+            tool_args_used = None
+        else:
+            result = None
+            tool_used = "llm"
+            tool_args_used = None
+    except Exception:
+        # Last-resort catch: the providers already handle their own HTTP
+        # errors, but an unexpected fault here must not 500 the chat.
+        log.exception("chat dispatch failed for session %s", sid)
+        text = "Reyu hit an unexpected snag on that one — please try again in a moment."
+        await _save_message(sid, "assistant", text)
+        return ChatResponse(
+            session_id=sid, text=text, busy=True,
+            ts=datetime.utcnow().isoformat(),
+        )
+
+    if result is None:
         decision = intent_router.route(req.message)
         if "error" in decision:
             error_text = decision["error"]

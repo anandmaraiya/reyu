@@ -14,6 +14,7 @@ can plug an LLM in later without rewriting handlers.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Awaitable
 from app.fyers import client as fy
 from app.analytics.chain import normalize_chain, trade_bias
@@ -26,6 +27,8 @@ from app.agent.strategy_tools import (
 )
 from app.store import store
 
+
+log = logging.getLogger("reyu.agent.tools")
 
 Handler = Callable[[dict, dict | None], Awaitable[dict]]
 
@@ -367,7 +370,16 @@ TOOLS["indicator_analysis"]["handler"] = t_indicator_analysis
 async def call_tool(name: str, args: dict, user: dict | None = None) -> dict:
     if name not in TOOLS:
         return {"text": f"Unknown tool `{name}`. Available: {', '.join(TOOLS)}"}
-    return await TOOLS[name]["handler"](args, user)
+    if not isinstance(args, dict):
+        args = {}
+    try:
+        return await TOOLS[name]["handler"](args, user)
+    except Exception as e:
+        # A flaky tool (bad symbol, broker/network blip, unexpected data
+        # shape) must never crash the chat turn. Log it and hand the model a
+        # short, honest failure string it can relay or route around.
+        log.exception("tool %s failed on args=%s", name, args)
+        return {"text": f"(the {name} tool hit an error and returned nothing usable: {e})"}
 
 
 def list_tools() -> list[dict]:
