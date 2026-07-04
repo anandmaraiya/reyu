@@ -145,7 +145,8 @@ async def chat_with_claude(
             if r.status_code != 200:
                 log.warning("Anthropic %d: %s", r.status_code, r.text[:400])
                 if r.status_code in (429, 529):
-                    return {"text": "Reyu's getting a lot of requests right now — give me a few seconds and ask again."}
+                    return {"text": "Reyu's getting a lot of requests right now — give me a few seconds and ask again.",
+                            "busy": True}
                 if r.status_code in (401, 403):
                     return {"text": "Reyu's AI service isn't configured correctly (auth). This is on us — please try again shortly."}
                 return {"text": f"Reyu hit a snag reaching its AI service (error {r.status_code}). Please try again in a moment."}

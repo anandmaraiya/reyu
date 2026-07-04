@@ -57,6 +57,9 @@ class ChatResponse(BaseModel):
     chart_post: dict | None = None
     chart_inline: str | None = None
     ts: str
+    # True when the AI backend was transiently unavailable (rate-limited /
+    # overloaded) — the client renders a "high demand" state with a retry.
+    busy: bool = False
 
 
 def _session_key(sid: str) -> str:
@@ -256,6 +259,7 @@ async def chat(
         chart_post=result.get("chart_post"),
         chart_inline=chart_inline,
         ts=datetime.utcnow().isoformat(),
+        busy=bool(result.get("busy")),
     )
 
 

@@ -24,6 +24,10 @@ interface Message {
   ts: string
   tool?: string | null
   pinned?: boolean
+  /** Transient AI-unavailable (rate-limited/overloaded) — show retry. */
+  busy?: boolean
+  /** The user prompt that produced this turn, so a retry can re-send it. */
+  retryPrompt?: string
 }
 interface Starter { icon: string; text: string }
 interface TrayItem { id: string; query: string; summary: string }
@@ -129,14 +133,15 @@ export default function Chat() {
       const resp = await api.post('/api/chat', { message: trimmed, session_id: sessionId || undefined })
       const d = resp.data
       if (d.session_id && d.session_id !== sessionId) { setSessionId(d.session_id); sessionStorage.setItem(SESSION_KEY, d.session_id) }
-      setMessages(prev => [...prev, { id: uuid(), role: 'assistant', content: d.text || '', chart: d.chart ?? null, chart_inline: d.chart_inline ?? null, data: d.data ?? null, ts: d.ts || new Date().toISOString(), tool: d.tool ?? null }])
+      setMessages(prev => [...prev, { id: uuid(), role: 'assistant', content: d.text || '', chart: d.chart ?? null, chart_inline: d.chart_inline ?? null, data: d.data ?? null, ts: d.ts || new Date().toISOString(), tool: d.tool ?? null, busy: !!d.busy, retryPrompt: d.busy ? trimmed : undefined }])
       // Refresh usage meter + plan panel after each send
       qc.invalidateQueries({ queryKey: ['chat-usage'] })
       qc.invalidateQueries({ queryKey: ['chat-plan'] })
     } catch (err: any) {
       const s = err?.response?.status
       if (!s || (s !== 401 && s !== 402 && s !== 403)) {
-        setMessages(prev => [...prev, { id: uuid(), role: 'assistant', content: 'Something went wrong. Try again.', ts: new Date().toISOString() }])
+        // Network drop / timeout / 5xx — all transient. Offer a retry.
+        setMessages(prev => [...prev, { id: uuid(), role: 'assistant', content: "Reyu couldn't reach its brain just now — could be a busy moment or a network blip.", ts: new Date().toISOString(), busy: true, retryPrompt: trimmed }])
       }
     } finally { setLoading(false); inputRef.current?.focus() }
   }, [loading, sessionId, qc])
@@ -345,12 +350,24 @@ export default function Chat() {
                     {(msg.chart_inline || msg.chart) && (
                       <div className="chat-chart"><img src={msg.chart_inline || msg.chart!} alt="Chart" loading="lazy" /></div>
                     )}
-                    <div style={{ marginTop: 8 }}>
-                      <button className={`rc-action ${msg.pinned ? 'rc-action-active' : ''}`} style={{ fontSize: 11 }}
-                              onClick={() => pinMessage(msg, lastUserMsg(idx))} title={msg.pinned ? 'Pinned' : 'Pin to tray'}>
-                        {msg.pinned ? '📌 Pinned' : '📌 Pin'}
-                      </button>
-                    </div>
+                    {msg.busy ? (
+                      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: '.04em', color: 'var(--warn, #d9822b)', background: 'rgba(217,130,43,0.12)', border: '1px solid rgba(217,130,43,0.3)', padding: '3px 9px', borderRadius: 999 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--warn, #d9822b)' }} />HIGH DEMAND
+                        </span>
+                        <button className="rc-action" style={{ fontSize: 12, fontWeight: 600 }} disabled={loading}
+                                onClick={() => msg.retryPrompt && send(msg.retryPrompt)} title="Send that again">
+                          ↻ Retry
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: 8 }}>
+                        <button className={`rc-action ${msg.pinned ? 'rc-action-active' : ''}`} style={{ fontSize: 11 }}
+                                onClick={() => pinMessage(msg, lastUserMsg(idx))} title={msg.pinned ? 'Pinned' : 'Pin to tray'}>
+                          {msg.pinned ? '📌 Pinned' : '📌 Pin'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
