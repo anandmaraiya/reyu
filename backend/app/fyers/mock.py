@@ -51,6 +51,26 @@ def _scrip(symbol: str) -> str:
     return symbol.strip().upper().split(":")[-1].replace("-INDEX", "").replace("-EQ", "")
 
 
+# Current index weekly/monthly expiry weekday (Mon=0 … Sun=6). Exchanges
+# standardized expiries by circular: NSE → TUESDAY, BSE → THURSDAY (eff.
+# late 2025). THIS IS THE ONE PLACE to change if the exchange shifts it
+# again — and it only affects *demo* data; live mode uses Fyers' real
+# expiryData. Reyu must never state the expiry weekday from model memory
+# (see the "time-varying facts" guardrail in the system prompt).
+NSE_EXPIRY_WEEKDAY = 1   # Tuesday
+BSE_EXPIRY_WEEKDAY = 3   # Thursday
+
+
+def _next_expiry_dt(symbol: str, now: datetime | None = None) -> datetime:
+    """Nearest upcoming weekly-expiry datetime for the symbol's exchange
+    (includes today if today is expiry day). Demo-only helper."""
+    now = now or datetime.utcnow()
+    core = _scrip(symbol)
+    weekday = BSE_EXPIRY_WEEKDAY if core in ("SENSEX", "BANKEX") else NSE_EXPIRY_WEEKDAY
+    days = (weekday - now.weekday()) % 7
+    return (now + timedelta(days=days)).replace(hour=15, minute=30, second=0, microsecond=0)
+
+
 def demo_spot(symbol: str) -> float:
     """Alias-tolerant demo spot. Never returns the misleading flat NIFTY
     default for an unrecognized symbol — unknown scrips get a deterministic
@@ -98,7 +118,7 @@ def mock_option_chain(symbol: str, strikecount: int = 25) -> dict[str, Any]:
     else:
         spacing = max(round(spot * 0.005, 0), 1)
     atm = round(spot / spacing) * spacing
-    expiry_dt = datetime.utcnow() + timedelta(days=7 - datetime.utcnow().weekday())
+    expiry_dt = _next_expiry_dt(symbol)
     expiry_ts = int(expiry_dt.timestamp())
     T = max((expiry_ts - datetime.utcnow().timestamp()) / (365 * 24 * 3600), 1 / 365)
 

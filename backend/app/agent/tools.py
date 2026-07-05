@@ -54,8 +54,51 @@ async def t_chain_summary(args: dict, _user: dict | None) -> dict:
     return {
         "text": text,
         "chart": f"/api/chart/oi?symbol={symbol}&strikecount=25",
-        "data": {"symbol": symbol, "summary": s, "bias": bias, "ltp": chain["ltp"]},
+        "data": {"symbol": symbol, "summary": s, "bias": bias, "ltp": chain["ltp"],
+                 "expiries": chain.get("expiries") or []},
     }
+
+
+# ── tool: expiry calendar (ground expiry facts in real data) ────
+_WD = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+async def t_expiry_calendar(args: dict, _user: dict | None) -> dict:
+    """Return the ACTUAL upcoming expiry dates for a symbol, read from the
+    live option-chain feed — so expiry-day questions are answered from data,
+    never from the model's (stale) memory of exchange rules."""
+    import datetime as _dt
+    symbol = args.get("symbol") or "NSE:NIFTY50-INDEX"
+    raw = await fy.option_chain(symbol, 5)
+    chain = normalize_chain(raw)
+    rows = chain.get("expiries") or []
+    parsed = []
+    for e in rows:
+        ts = e.get("expiry")
+        wd = None
+        if ts:
+            try:
+                wd = _WD[_dt.datetime.utcfromtimestamp(int(ts)).weekday()]
+            except Exception:
+                wd = None
+        parsed.append({"date": e.get("date"), "weekday": wd, "expiry_ts": ts})
+
+    if not parsed:
+        return {"text": f"No expiry data available for {symbol} right now — the chain feed returned none.",
+                "data": {"symbol": symbol, "expiries": []}}
+
+    front = parsed[0]
+    wd_note = f" ({front['weekday']})" if front.get("weekday") else ""
+    lines = "\n".join(
+        f"• {p['date']} — {p['weekday']}" if p.get("weekday") else f"• {p['date']}"
+        for p in parsed
+    )
+    text = (
+        f"**{symbol} — upcoming expiries** (from the platform's live contract feed):\n{lines}\n\n"
+        f"Nearest expiry: **{front['date']}**{wd_note}. These dates come straight from the "
+        f"exchange feed — the expiry weekday is whatever the feed says, not a fixed rule from memory."
+    )
+    return {"text": text, "data": {"symbol": symbol, "expiries": parsed}}
 
 
 # -- tool: chart request (explicit chart intent) ------------------
@@ -216,6 +259,14 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": "Get chain bias, PCR, max-pain, ATM IV, and OI delta for a symbol.",
         "parameters": {"symbol": "string (e.g. NSE:NIFTY50-INDEX)"},
         "handler": t_chain_summary,
+    },
+    "expiry_calendar": {
+        "description": "Get the ACTUAL upcoming expiry dates (and weekday) for a symbol from the "
+                       "live contract feed. ALWAYS use this for any question about when an option "
+                       "expires or which weekday expiry falls on — expiry rules change by exchange "
+                       "circular, so never answer expiry-day questions from memory.",
+        "parameters": {"symbol": "string (e.g. NSE:NIFTY50-INDEX)"},
+        "handler": t_expiry_calendar,
     },
     "suggest_hedge": {
         "description": "Suggest a delta-neutral hedge for a given option position.",
