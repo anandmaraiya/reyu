@@ -114,6 +114,43 @@ async def t_create_strategy(args: dict, user: dict | None) -> dict:
     }
 
 
+def _build_option_legs(args: dict, action: str, opt: str) -> list[dict]:
+    """Build the option-leg list for a CONDITIONAL spec.
+
+    Multi-leg: pass `legs` as a list of shorthands, e.g. a bull put spread —
+      legs=[{action:SELL, option_type:PE, strike_offset:0},
+            {action:BUY,  option_type:PE, strike_offset:-10}]
+    (strike_offset is in ATM steps: -10 = 10 strikes below ATM.) Falls back to
+    a single leg from the flat action/option_type args when `legs` is absent.
+    Capped at the spec's 4-leg maximum."""
+    raw = args.get("legs")
+    if isinstance(raw, list) and raw:
+        legs = []
+        for i, l in enumerate(raw[:4], 1):
+            if not isinstance(l, dict):
+                continue
+            legs.append({
+                "leg_id": f"L{i}",
+                "action": str(l.get("action") or "BUY").upper(),
+                "instrument_type": "OPTION",
+                "option_type": str(l.get("option_type") or "CE").upper(),
+                "strike": {"mode": "ATM_OFFSET", "offset": int(l.get("strike_offset") or 0)},
+                "expiry": {"mode": "WEEKLY", "offset": int(l.get("expiry_offset") or 0)},
+                "qty_lots": int(l.get("qty_lots") or 1),
+            })
+        if legs:
+            return legs
+    return [{
+        "leg_id": "L1",
+        "action": action,
+        "instrument_type": "OPTION",
+        "option_type": opt,
+        "strike": {"mode": "ATM_OFFSET", "offset": int(args.get("strike_offset") or 0)},
+        "expiry": {"mode": "WEEKLY", "offset": 0},
+        "qty_lots": int(args.get("qty_lots") or 1),
+    }]
+
+
 def _build_shorthand_spec(args: dict) -> dict | None:
     """Translate flat agent args into a full StrategySpec dict.
     Returns None if minimum fields aren't present."""
@@ -193,15 +230,7 @@ def _build_shorthand_spec(args: dict) -> dict | None:
         "kind": "CONDITIONAL",
         "tier_required": args.get("tier_required") or "free",
         "universe": universe,
-        "legs": [{
-            "leg_id": "L1",
-            "action": action,
-            "instrument_type": "OPTION",
-            "option_type": opt,
-            "strike": {"mode": "ATM_OFFSET", "offset": int(args.get("strike_offset") or 0)},
-            "expiry": {"mode": "WEEKLY", "offset": 0},
-            "qty_lots": int(args.get("qty_lots") or 1),
-        }],
+        "legs": _build_option_legs(args, action, opt),
         "entry_rules": {
             "trigger": "SIGNAL" if cond else "SCHEDULE",
             "schedule": {

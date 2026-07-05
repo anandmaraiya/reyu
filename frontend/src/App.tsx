@@ -52,7 +52,6 @@ const Strategies     = lazy(() => import('./pages/Strategies'))
 const StrategyDetail = lazy(() => import('./pages/StrategyDetail'))
 const StrategyCompare= lazy(() => import('./pages/StrategyCompare'))
 const Backtest       = lazy(() => import('./pages/Backtest'))
-const Compare        = lazy(() => import('./pages/Compare'))
 // Watchlist
 const Scalping       = lazy(() => import('./pages/Scalping'))
 const Portfolios     = lazy(() => import('./pages/Portfolios'))
@@ -147,7 +146,9 @@ function AppShell() {
                 <Route path="/strategies/compare"  element={<StrategyCompare />} />
                 <Route path="/strategies/:id"      element={<StrategyDetail />} />
                 <Route path="/backtest"            element={<Backtest />} />
-                <Route path="/compare"             element={<Compare />} />
+                {/* Legacy /compare used dead endpoints — the working
+                    saved-strategy comparison lives at /strategies/compare. */}
+                <Route path="/compare"             element={<Navigate to="/strategies/compare" replace />} />
 
                 {/* Watchlist */}
                 <Route path="/scalping"   element={<Scalping />} />

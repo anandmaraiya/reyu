@@ -36,7 +36,7 @@ from app.fyers import cache
 from app.fyers.symbols import resolve as resolve_symbol
 from app.rl.calendar import iter_trading_days
 from app.sim.engine import (
-    simulate_session, compute_roi, Decision, SimTrade,
+    simulate_session, simulate_session_multileg, compute_roi, Decision, SimTrade,
     realized_iv_feature_extractor,
 )
 from app.strategy.conditions import entry_allowed
@@ -154,14 +154,29 @@ async def _execute_run_inner(run_id: str) -> None:
         src = hist.get("source", "L1_FORWARD_INTRADAY")
         source_tally[src] = source_tally.get(src, 0) + 1
 
-        day_trades = simulate_session(
-            candles,
-            decide=decide_fn,
-            target_pct=spec.exit_rules.tp_pct,
-            stop_pct=spec.exit_rules.sl_pct,
-            underlying=underlying,
-            seed=seed,
-        )
+        if len(spec.legs) > 1:
+            # True multi-leg structure (spread / condor / …) — price every
+            # leg and track the combined position. decide_fn is the entry gate.
+            day_trades = simulate_session_multileg(
+                candles,
+                gate=decide_fn,
+                legs=[{"action": lg.action, "option_type": lg.option_type,
+                       "offset": (lg.strike.offset if lg.strike else 0) or 0,
+                       "qty_lots": lg.qty_lots} for lg in spec.legs],
+                target_pct=spec.exit_rules.tp_pct,
+                stop_pct=spec.exit_rules.sl_pct,
+                underlying=underlying,
+                seed=seed,
+            )
+        else:
+            day_trades = simulate_session(
+                candles,
+                decide=decide_fn,
+                target_pct=spec.exit_rules.tp_pct,
+                stop_pct=spec.exit_rules.sl_pct,
+                underlying=underlying,
+                seed=seed,
+            )
         # Attach the bar's epoch ts to the trade for ledger persistence
         for t in day_trades:
             t.entry_signal["entry_unix"] = int(candles[t.entry_idx][0])
@@ -210,15 +225,28 @@ async def _execute_run_inner(run_id: str) -> None:
                     "exit_ts": exit_ts,
                     "entry_signal": json.dumps(t.entry_signal),
                     "exit_reason": t.status,
-                    "legs": json.dumps([{
-                        "leg_id": "L1",
-                        "symbol": None,
-                        "action": "BUY",
-                        "qty": t.qty_lots * lot_size,
-                        "entry_price": t.entry_prem,
-                        "exit_price": t.exit_prem,
-                        "fees_inr": round(roi.get("fees_inr_per_trade") or 0, 2),
-                    }]),
+                    # Multi-leg trades carry real per-leg detail in the signal;
+                    # single-leg trades fall back to the L1 summary.
+                    "legs": json.dumps(
+                        [{"leg_id": f"L{i+1}", "symbol": None,
+                          "action": lg.get("action", "BUY"),
+                          "option_type": lg.get("option_type"),
+                          "strike": lg.get("strike"),
+                          "qty": int(lg.get("qty_lots") or 1) * lot_size,
+                          "entry_price": lg.get("entry_prem"),
+                          "fees_inr": round((roi.get("fees_inr_per_trade") or 0) / max(len(t.entry_signal["legs"]), 1), 2)}
+                         for i, lg in enumerate(t.entry_signal["legs"])]
+                        if isinstance(t.entry_signal.get("legs"), list) and t.entry_signal["legs"]
+                        else [{
+                            "leg_id": "L1",
+                            "symbol": None,
+                            "action": "BUY",
+                            "qty": t.qty_lots * lot_size,
+                            "entry_price": t.entry_prem,
+                            "exit_price": t.exit_prem,
+                            "fees_inr": round(roi.get("fees_inr_per_trade") or 0, 2),
+                        }]
+                    ),
                     "gross_pnl_inr": round(
                         (t.exit_prem - t.entry_prem) * lot_size * t.qty_lots, 2
                     ),

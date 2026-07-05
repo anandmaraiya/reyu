@@ -237,6 +237,125 @@ def simulate_session(
     return trades
 
 
+def simulate_session_multileg(
+    candles_5m: list[list],
+    *,
+    gate: DecideFn,
+    legs: list[dict],
+    target_pct: float,
+    stop_pct: float,
+    underlying: str,
+    feature_extractor: FeatureFn = realized_iv_feature_extractor,
+    pricer: PricerFn = bs_pricer,
+    max_hold_bars: int = 30,
+    bs_dte_days: float = 3.0,
+    iv_floor: float = 0.05,
+    seed: int | None = None,
+) -> list[SimTrade]:
+    """Multi-leg intraday simulator — prices EVERY leg per bar and tracks the
+    combined position, so real spreads (bull-put, iron-condor, ratio, …) are
+    simulated as one net structure rather than just the primary leg.
+
+    `gate(features, idx, ctx)` is the entry gate: a non-FLAT decision opens the
+    full leg structure; the decision's direction/offset are ignored (the
+    structure is fixed by `legs`). Each leg dict: {action BUY|SELL,
+    option_type CE|PE, offset (ATM steps, int), qty_lots}.
+
+    P&L convention: net mark-to-market = Σ sign·prem·qty (sign +1 BUY / −1 SELL).
+    Position P&L vs entry = MTM_now − MTM_entry (works for both debit and credit
+    structures). TP/SL fire on P&L as a fraction of |net entry premium| — the
+    natural analog of the single-leg 'percent of entry premium'. Results fold
+    the net basis into entry_prem/exit_prem so compute_roi + metrics work
+    unchanged; per-leg detail rides in entry_signal['legs']."""
+    if seed is not None:
+        random.seed(seed)
+    if len(candles_5m) < 10 or not legs:
+        return []
+    step = strike_step(underlying)
+    norm = []
+    for l in legs:
+        norm.append({
+            "sign": 1.0 if str(l.get("action", "BUY")).upper() == "BUY" else -1.0,
+            "opt": str(l.get("option_type", "CE")).upper(),
+            "offset": int(l.get("offset") or 0),
+            "qty": int(l.get("qty_lots") or 1),
+        })
+    trades: list[SimTrade] = []
+    idx = 6
+    last = len(candles_5m) - 4
+    while idx < last:
+        features = feature_extractor(candles_5m, idx)
+        ctx = {"progress": idx / len(candles_5m), "underlying": underlying}
+        if gate(features, idx, ctx).action == "FLAT":
+            idx += 1
+            continue
+
+        spot_entry = candles_5m[idx][4]
+        atm = atm_strike(spot_entry, step)
+        T_entry = bs_dte_days / 365
+        iv = max(features[10] if len(features) > 10 else 0.15, iv_floor)
+        entry_ts = candles_5m[idx][0]
+
+        book = []          # per-leg {strike, opt, sign, qty, entry_prem}
+        net_entry = 0.0
+        for lg in norm:
+            strike = atm + lg["offset"] * step
+            prem = pricer(spot_entry, strike, T_entry, lg["opt"], {"iv": iv, "ts": entry_ts})
+            book.append({**lg, "strike": strike, "entry_prem": prem})
+            net_entry += lg["sign"] * prem * lg["qty"]
+
+        basis = abs(net_entry)
+        if basis <= 0.5:            # degenerate (fully offsetting) — skip
+            idx += 1
+            continue
+
+        status = "TIMEOUT"
+        exit_idx = idx
+        final_pnl = 0.0
+        max_fav = 0.0
+        max_adv = 0.0
+        for j in range(idx + 1, min(idx + max_hold_bars, len(candles_5m))):
+            spot_j = candles_5m[j][4]
+            T_j = max(T_entry - (j - idx) * 5 / (60 * 24 * 365), 1 / 365 / 24)
+            mtm = 0.0
+            for b in book:
+                pj = pricer(spot_j, b["strike"], T_j, b["opt"], {"iv": iv, "ts": candles_5m[j][0]})
+                mtm += b["sign"] * pj * b["qty"]
+            pnl = mtm - net_entry               # rupee P&L per (share × lot fold)
+            pnl_pct_now = pnl / basis * 100
+            if pnl_pct_now > max_fav: max_fav = pnl_pct_now
+            if pnl_pct_now < max_adv: max_adv = pnl_pct_now
+            exit_idx = j
+            final_pnl = pnl
+            if pnl >= target_pct * basis:
+                status = "TP"; break
+            if pnl <= -stop_pct * basis:
+                status = "SL"; break
+
+        pnl_pct = final_pnl / basis * 100
+        reward = reward_for(status, pnl_pct, target_pct, stop_pct)
+        struct = "+".join(f"{'+' if b['sign']>0 else '-'}{b['opt']}@{int(b['strike'])}" for b in book)
+        trade = SimTrade(
+            entry_idx=idx, exit_idx=exit_idx,
+            # Fold the net basis so compute_roi's (exit-entry)*lot*qty == P&L.
+            entry_prem=basis, exit_prem=basis + final_pnl,
+            strike=book[0]["strike"], option_type="SPREAD",
+            action="LONG" if net_entry > 0 else "SHORT", status=status,
+            pnl_pct=pnl_pct, reward=reward, qty_lots=1,
+            entry_signal={"structure": struct,
+                          "net_entry_prem": round(net_entry, 2),
+                          "legs": [{"action": "BUY" if b["sign"] > 0 else "SELL",
+                                    "option_type": b["opt"], "strike": b["strike"],
+                                    "qty_lots": b["qty"], "entry_prem": round(b["entry_prem"], 2)}
+                                   for b in book]},
+            mae_pct=round(max_adv, 3), mfe_pct=round(max_fav, 3),
+            iv_used=iv,
+        )
+        trades.append(trade)
+        idx = exit_idx + 1
+    return trades
+
+
 # ── Capital-sequenced ROI w/ realistic friction ────────────────────
 def compute_roi(
     trades: list[SimTrade] | list[dict],

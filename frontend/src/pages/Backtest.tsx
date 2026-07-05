@@ -1,160 +1,118 @@
-import { useState } from 'react'
+/**
+ * Backtest — pick one of YOUR saved strategies and run a real backtest.
+ *
+ * The old page replayed built-in "template" strategies against a legacy
+ * snapshot endpoint that no longer exists (empty dropdown). This launches
+ * the real StrategySpec backtest (POST /api/strategies/:id/runs) — the same
+ * engine the strategy detail page uses — then hands off to that page's
+ * performance tab, which renders results, equity curve, risk sim, and
+ * walk-forward. Multi-leg spreads are simulated leg-by-leg by the engine.
+ */
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate, Link } from 'react-router-dom'
 import { api } from '../api'
-import {
-  ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer, CartesianGrid,
-} from 'recharts'
-import { chartTooltipStyles } from '../chartTheme'
+import { useToast } from '../toast'
 
-const SYMBOLS = [
-  'NSE:NIFTY50-INDEX', 'NSE:NIFTYBANK-INDEX', 'NSE:FINNIFTY-INDEX',
-  'NSE:MIDCPNIFTY-INDEX', 'BSE:SENSEX-INDEX',
-]
+type Strat = { id: string; name: string; kind?: string; status?: string; universe?: string[] }
 
-const num = (n: any, d = 2) => n == null ? '—' : Number(n).toLocaleString('en-IN', { maximumFractionDigits: d })
-
-type Trade = {
-  day: string; side: 'CE' | 'PE'; strike: number
-  entry_spot: number; entry_premium: number
-  exit_spot: number; exit_premium: number
-  pnl_per_unit: number; return_pct: number
-}
-
-type Result = {
-  symbol: string; strategy: string
-  trades: Trade[]
-  equity_curve: { day: string; cum_pnl: number; trade: { side: string; pnl: number } | null }[]
-  metrics: {
-    total_trades: number; cum_pnl: number; win_rate: number
-    avg_win: number; avg_loss: number
-    sharpe_annualised: number | null; max_drawdown: number
-  }
-  error?: string
-}
+const iso = (d: Date) => d.toISOString().slice(0, 10)
 
 export default function Backtest() {
-  const [symbol, setSymbol] = useState(SYMBOLS[0])
-  const [strategy, setStrategy] = useState('follow_bias')
-  const [days, setDays] = useState(30)
+  const t = useToast()
+  const nav = useNavigate()
+  const [strategyId, setStrategyId] = useState('')
+  const [start, setStart] = useState(iso(new Date(Date.now() - 90 * 86400000)))
+  const [end, setEnd] = useState(iso(new Date()))
+  const [capital, setCapital] = useState(100000)
+  const [busy, setBusy] = useState(false)
 
-  const { data: strategies } = useQuery<{ strategies: { id: string; name: string; description: string }[] }>({
-    queryKey: ['bt-strategies'],
-    queryFn: async () => (await api.get('/api/backtest/strategies')).data,
+  const { data, isLoading } = useQuery<{ items: Strat[] }>({
+    queryKey: ['my-strategies'],
+    queryFn: async () => (await api.get('/api/strategies')).data,
   })
+  const strategies = data?.items || []
+  const selected = useMemo(() => strategies.find(s => s.id === strategyId), [strategies, strategyId])
 
-  const { data: result, isFetching, refetch } = useQuery<Result>({
-    queryKey: ['bt-run', symbol, strategy, days],
-    queryFn: async () => (await api.get('/api/backtest/run', { params: { symbol, strategy, days } })).data,
-    enabled: false,   // run only on click
-  })
-
-  const m = result?.metrics
-  const currentStrat = strategies?.strategies.find(s => s.id === strategy)
+  async function run() {
+    if (!strategyId) { t.push('error', 'Pick a strategy first.'); return }
+    setBusy(true)
+    try {
+      const q = new URLSearchParams({
+        period_start: start, period_end: end,
+        starting_capital: String(capital), seed: '42',
+      })
+      const { data: r } = await api.post(`/api/strategies/${strategyId}/runs?${q}`)
+      t.push('success', 'Backtest started — opening results…')
+      // Hand off to the strategy detail page; its performance tab polls the run.
+      nav(`/strategies/${strategyId}?run=${r.run_id}`)
+    } catch (e: any) {
+      t.push('error', e?.response?.data?.detail || e?.message || 'Could not start the backtest.')
+    } finally { setBusy(false) }
+  }
 
   return (
     <div className="page-shell">
       <div className="card">
         <div className="card-header">
-          <h3>Backtest</h3>
+          <h3>Backtest a saved strategy</h3>
           <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-            Replays stored snapshot history against a strategy. Needs ≥1 trading session of data.
+            Runs the real StrategySpec engine on historical data. Results open on the strategy's performance tab.
           </span>
         </div>
-        <div className="row" style={{ alignItems: 'flex-end', gap: 10 }}>
-          <Field label="Underlying">
-            <select value={symbol} onChange={e => setSymbol(e.target.value)}>
-              {SYMBOLS.map(s => <option key={s}>{s}</option>)}
-            </select>
-          </Field>
-          <Field label="Strategy">
-            <select value={strategy} onChange={e => setStrategy(e.target.value)}>
-              {strategies?.strategies.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Lookback (days)">
-            <input className="input" type="number" min={1} max={365} value={days}
-                   onChange={e => setDays(+e.target.value)} style={{ width: 100 }} />
-          </Field>
-          <button className="primary" onClick={() => refetch()} disabled={isFetching}>
-            {isFetching ? 'Replaying…' : 'Run backtest'}
-          </button>
-        </div>
-        {currentStrat && (
-          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>{currentStrat.description}</div>
+
+        {isLoading ? (
+          <div style={{ color: 'var(--muted)', fontSize: 13, padding: '12px 0' }}>Loading your strategies…</div>
+        ) : strategies.length === 0 ? (
+          <div style={{ color: 'var(--muted)', fontSize: 13, padding: '12px 0' }}>
+            You have no saved strategies yet. Build one with{' '}
+            <Link to="/" style={{ color: 'var(--accent, var(--brand-primary))' }}>Reyu</Link> or copy a{' '}
+            <Link to="/templates" style={{ color: 'var(--accent, var(--brand-primary))' }}>template</Link>, then come back to backtest it.
+          </div>
+        ) : (
+          <>
+            <div className="row" style={{ alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+              <Field label="Strategy">
+                <select value={strategyId} onChange={e => setStrategyId(e.target.value)} style={{ minWidth: 220 }}>
+                  <option value="">— pick a saved strategy —</option>
+                  {strategies.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}{s.kind ? ` · ${s.kind}` : ''}{s.status ? ` · ${s.status}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="From">
+                <input className="input" type="date" value={start} onChange={e => setStart(e.target.value)} />
+              </Field>
+              <Field label="To">
+                <input className="input" type="date" value={end} onChange={e => setEnd(e.target.value)} />
+              </Field>
+              <Field label="Capital ₹">
+                <input className="input" type="number" min={10000} step={10000} value={capital}
+                       onChange={e => setCapital(+e.target.value)} style={{ width: 130 }} />
+              </Field>
+              <button className="primary" onClick={run} disabled={busy || !strategyId}>
+                {busy ? 'Starting…' : 'Run backtest'}
+              </button>
+            </div>
+            {selected?.universe?.[0] && (
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>
+                Universe: {selected.universe[0]} · results will open on{' '}
+                <Link to={`/strategies/${selected.id}`} style={{ color: 'var(--accent, var(--brand-primary))' }}>the strategy page</Link>.
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      {result?.error && (
-        <div className="card bear" style={{ marginTop: 12 }}>{result.error}</div>
-      )}
-
-      {result && !result.error && m && (
-        <>
-          <div className="grid-4" style={{ marginTop: 12 }}>
-            <KPI label="Trades" value={m.total_trades} />
-            <KPI label="Cum P&L (per unit)" value={`₹${num(m.cum_pnl, 0)}`}
-                 tone={m.cum_pnl >= 0 ? 'bull' : 'bear'} />
-            <KPI label="Win rate" value={`${(m.win_rate * 100).toFixed(0)}%`} />
-            <KPI label="Sharpe (ann.)" value={m.sharpe_annualised ?? '—'} />
-          </div>
-          <div className="grid-3" style={{ marginTop: 8 }}>
-            <KPI label="Avg win" value={`₹${num(m.avg_win, 2)}`} tone="bull" />
-            <KPI label="Avg loss" value={`₹${num(m.avg_loss, 2)}`} tone="bear" />
-            <KPI label="Max DD" value={`₹${num(m.max_drawdown, 2)}`} tone="bear" />
-          </div>
-
-          <div className="card" style={{ marginTop: 12 }}>
-            <div className="card-header">
-              <h3>Equity curve</h3>
-              <span style={{ fontSize: 11, color: 'var(--muted)' }}>cumulative P&L per unit · daily bars</span>
-            </div>
-            <div style={{ width: '100%', height: 320 }}>
-              <ResponsiveContainer>
-                <ComposedChart data={result.equity_curve}>
-                  <CartesianGrid stroke="var(--border)" strokeDasharray="2 3" />
-                  <XAxis dataKey="day" tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                  <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                  <Tooltip {...chartTooltipStyles()} />
-                  <ReferenceLine y={0} stroke="#94a3b8" />
-                  <Line type="monotone" dataKey="cum_pnl" stroke="#60a5fa" strokeWidth={2} dot={false} name="Cum P&L" />
-                  <Bar dataKey="trade.pnl" name="Day P&L" fill="#16a34a" opacity={0.5} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="card" style={{ marginTop: 12 }}>
-            <h3>Trades</h3>
-            <div style={{ maxHeight: 320, overflow: 'auto' }}>
-              <table>
-                <thead style={{ position: 'sticky', top: 0, background: 'var(--panel)' }}>
-                  <tr>
-                    <th>Day</th><th>Side</th><th>Strike</th>
-                    <th>Entry spot</th><th>Entry ₹</th>
-                    <th>Exit spot</th><th>Exit ₹</th>
-                    <th>P&L</th><th>Ret %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.trades.map((t, i) => (
-                    <tr key={i}>
-                      <td>{t.day}</td>
-                      <td className={t.side === 'CE' ? 'bull' : 'bear'}>{t.side}</td>
-                      <td>{num(t.strike, 0)}</td>
-                      <td>{num(t.entry_spot, 2)}</td>
-                      <td>{num(t.entry_premium, 2)}</td>
-                      <td>{num(t.exit_spot, 2)}</td>
-                      <td>{num(t.exit_premium, 2)}</td>
-                      <td className={t.pnl_per_unit >= 0 ? 'bull' : 'bear'}>{num(t.pnl_per_unit, 2)}</td>
-                      <td className={t.return_pct >= 0 ? 'bull' : 'bear'}>{num(t.return_pct, 1)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      )}
+      <div className="card" style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.6 }}>
+          Want to compare several strategies' runs side by side? Use{' '}
+          <Link to="/strategies/compare" style={{ color: 'var(--accent, var(--brand-primary))' }}>Compare</Link>.
+          Backtests are hypothetical historical simulations — not a performance claim or a prediction.
+        </div>
+      </div>
     </div>
   )
 }
@@ -164,15 +122,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</span>
       {children}
-    </div>
-  )
-}
-
-function KPI({ label, value, tone }: { label: string; value: any; tone?: 'bull' | 'bear' }) {
-  return (
-    <div className="card">
-      <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</div>
-      <div className={`kpi ${tone || ''}`} style={{ marginTop: 4 }}>{value}</div>
     </div>
   )
 }

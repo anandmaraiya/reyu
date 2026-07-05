@@ -302,6 +302,11 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": "Create + save a new strategy (options OR cash equity). Accepts shorthand "
                        "(name, universe, action, option_type, tp_pct, sl_pct, feature, op, value) "
                        "or a full {spec} object. Saves as DRAFT. "
+                       "MULTI-LEG options (spreads, condors, strangles): pass `legs` as a list of "
+                       "up to 4 {action, option_type, strike_offset, qty_lots} — strike_offset is in "
+                       "ATM steps (e.g. bull put spread = [{action:SELL,option_type:PE,strike_offset:0}, "
+                       "{action:BUY,option_type:PE,strike_offset:-10}]). Multi-leg backtests price every "
+                       "leg and track the combined position; TP/SL are % of the net entry premium. "
                        "For EQUITY strategies (swing/positional/SIP on stocks like NSE:RELIANCE-EQ), "
                        "set kind=EQUITY_EOD — daily-bar signals, delivery (CNC), multi-day holds, "
                        "long-only. Equity condition features (eq_*): eq_close, eq_sma20_dist_pct, "
@@ -325,6 +330,8 @@ TOOLS: dict[str, dict[str, Any]] = {
             "qty_lots": "int (default 1)",
             "max_position_inr": "float (per-position capital cap)",
             "max_concurrent": "int (EQUITY_EOD SIP: how many tranches may be open)",
+            "legs": "list[{action:BUY|SELL, option_type:CE|PE, strike_offset:int (ATM steps), qty_lots:int}] "
+                    "for MULTI-LEG option structures (spreads/condors); up to 4 legs",
             "tags": "list[string]", "spec": "object (full StrategySpec)",
         },
         "handler": t_create_strategy,
