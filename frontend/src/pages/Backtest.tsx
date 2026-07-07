@@ -13,6 +13,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate, Link } from 'react-router-dom'
 import { api } from '../api'
 import { useToast } from '../toast'
+import JourneyGuide from '../components/JourneyGuide'
 
 type Strat = { id: string; name: string; kind?: string; status?: string; universe?: string[] }
 
@@ -53,6 +54,7 @@ export default function Backtest() {
 
   return (
     <div className="page-shell">
+      <JourneyGuide current="backtest" note="You're at the backtest step: replay a saved strategy on past data to see how it would have done — before risking anything." />
       <div className="card">
         <div className="card-header">
           <h3>Backtest a saved strategy</h3>

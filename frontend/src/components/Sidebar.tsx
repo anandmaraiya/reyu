@@ -56,8 +56,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'subscribe', label: 'Subscription',  icon: <SubIcon />,       path: '/subscribe', group: 'Account' },
   { id: 'settings',  label: 'Settings',      icon: <SettingsIcon />,  path: '/settings',  group: 'Account' },
   { id: 'legal',     label: 'Legal',         icon: <SettingsIcon />,  path: '/legal',     group: 'Account' },
-  { id: 'rl',        label: 'RL Engine',     icon: <RLIcon />,        path: '/rl',        group: 'Account', badge: 'LIVE' },
-  { id: 'rl-lab',    label: 'Training Lab',  icon: <RLIcon />,        path: '/rl/lab',    group: 'Account' },
+  { id: 'rl',        label: 'AI Auto-Trader', icon: <RLIcon />,       path: '/rl',        group: 'Account', badge: 'LIVE' },
+  { id: 'rl-lab',    label: 'Strategy Lab',  icon: <RLIcon />,        path: '/rl/lab',    group: 'Account' },
   // Superadmin only — Sidebar filters this for non-superadmins.
   { id: 'data-admin',label: 'Data Capture',  icon: <SettingsIcon />,  path: '/admin/data', group: 'Admin', badge: 'ADMIN' },
 ]

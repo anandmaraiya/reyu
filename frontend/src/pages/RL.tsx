@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../context/AuthContext'
 import { istAgo, istTime } from '../marketHours'
+import JourneyGuide from '../components/JourneyGuide'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -344,31 +345,45 @@ export default function RL() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <span className="rl-refresh-hint">Auto-refresh 30s</span>
             <div className="rl-actions">
-              <a className="rl-btn" href="/rl/lab" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>🧪 Training Lab</a>
-              <button className="rl-btn" onClick={decideNow}>▶ Decide Now</button>
-              <button className="rl-btn primary" onClick={trainNow}>⚡ Train</button>
+              <a className="rl-btn" href="/rl/lab" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }} title="Teach your own strategy on past data">🧪 Strategy Lab</a>
+              <button className="rl-btn" onClick={decideNow} title="Ask the engine to take a fresh look at the market right now">▶ Check now</button>
+              <button className="rl-btn primary" onClick={trainNow} title="Re-teach the engine on the latest closed trades">⚡ Re-teach</button>
             </div>
           </div>
         </div>
 
         {error && <div className="rl-error">⚠ {error}</div>}
 
+        {/* Plain-language "what is this page" for first-time users */}
+        <JourneyGuide current="paper" note="This is the paper-testing step. Reyu's own auto-learning engine trades here with fake money, in real time — so you can watch how it behaves before anything real." />
+        <div style={{
+          border: '1px solid var(--color-border)', borderRadius: 12, padding: '14px 16px',
+          marginBottom: 20, background: 'var(--color-bg)', fontSize: 13, lineHeight: 1.6,
+          color: 'var(--color-text-secondary)',
+        }}>
+          <strong style={{ color: 'var(--color-text-primary)' }}>What am I looking at?</strong> Reyu has a strategy that
+          <strong> teaches itself</strong> when to buy or sell, and paper-trades it live (fake money, real prices). Below:
+          the numbers up top are its scorecard, <strong>Signals</strong> are what it wants to do right now,
+          <strong> Universe</strong> is each market it watches (toggle any on/off), and <strong>Trades</strong> is its history.
+          Want to teach your own version? Open the <a href="/rl/lab" style={{ color: 'var(--color-primary)' }}>Strategy Lab</a>.
+        </div>
+
         {/* KPI bar */}
         <div className="rl-kpi-bar">
-          <div className="rl-kpi">
-            <div className="rl-kpi-label">Active Policies</div>
+          <div className="rl-kpi" title="How many markets the engine is actively trading, out of all it watches.">
+            <div className="rl-kpi-label">Markets active</div>
             <div className="rl-kpi-value">{summary?.enabled ?? '—'}<span style={{ fontSize: 14, fontWeight: 400, color: 'var(--color-text-tertiary)' }}>/{summary?.policies ?? '—'}</span></div>
-            <div className="rl-kpi-sub">Feature dim: {summary?.feature_dim ?? '—'}</div>
+            <div className="rl-kpi-sub">on / total watched</div>
           </div>
           <div className={`rl-kpi ${globalWR != null && globalWR >= 0.5 ? 'positive' : globalWR != null ? 'negative' : ''}`}>
             <div className="rl-kpi-label">Global Win Rate</div>
             <div className="rl-kpi-value">{pct(globalWR)}</div>
             <div className="rl-kpi-sub">{totalWins}W / {totalTrades - totalWins}L of {totalTrades}</div>
           </div>
-          <div className={`rl-kpi ${totalReward > 0 ? 'positive' : totalReward < 0 ? 'negative' : ''}`}>
-            <div className="rl-kpi-label">Cum. Reward</div>
+          <div className={`rl-kpi ${totalReward > 0 ? 'positive' : totalReward < 0 ? 'negative' : ''}`} title="A running score of how well its trades have gone — higher is better.">
+            <div className="rl-kpi-label">Total score</div>
             <div className="rl-kpi-value">{fmt(totalReward)}</div>
-            <div className="rl-kpi-sub">All-time bandit score</div>
+            <div className="rl-kpi-sub">higher is better</div>
           </div>
           <div className="rl-kpi">
             <div className="rl-kpi-label">Open Trades</div>
@@ -401,9 +416,9 @@ export default function RL() {
         {/* Tabs */}
         <div className="rl-tabs">
           {([
-            ['recs', '🎯 Signals', recs.length],
-            ['universe', '🗂 Universe', policies.length],
-            ['trades', '📋 Trades', trades.length],
+            ['recs', '🎯 What it wants to do now', recs.length],
+            ['universe', '🗂 Markets it watches', policies.length],
+            ['trades', '📋 Its trade history', trades.length],
           ] as const).map(([id, label, count]) => (
             <div
               key={id}
