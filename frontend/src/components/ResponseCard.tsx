@@ -17,6 +17,7 @@
  *   red    = error
  */
 import React, { useState } from 'react'
+import { istTime } from '../marketHours'
 
 export type QCStatus = 'live' | 'stale' | 'demo' | 'error'
 
@@ -89,7 +90,7 @@ export function ResponseCard({
           </div>
           <div className="rc-header-right">
             {demo && <span className="rc-badge demo-tag">DEMO</span>}
-            {ageLabel && <span className="rc-age" title={fetchedAt ? new Date(fetchedAt).toLocaleTimeString() : ''}>{ageLabel}</span>}
+            {ageLabel && <span className="rc-age" title={fetchedAt ? istTime(fetchedAt) : ''}>{ageLabel}</span>}
           </div>
         </div>
       )}

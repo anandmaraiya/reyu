@@ -12,6 +12,7 @@
 import { useQuery } from '@tanstack/react-query'
 import type { CSSProperties } from 'react'
 import { api } from '../api'
+import { istDateTime } from '../marketHours'
 
 type Usage = {
   tier: string
@@ -86,7 +87,7 @@ export default function ChatUsageMeter() {
   const isPaid = tier === 'pro' || tier === 'algo' || tier === 'superadmin'
 
   return (
-    <div style={S.wrap} title={`Resets at midnight UTC · ${new Date(q.data.resets_at).toLocaleString()}`}>
+    <div style={S.wrap} title={`Resets ${istDateTime(q.data.resets_at)} IST`}>
       <span style={S.tierPill(isPaid)}>{tier}</span>
 
       <div style={S.meter}>

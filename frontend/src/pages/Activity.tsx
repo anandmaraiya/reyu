@@ -9,6 +9,7 @@ import { type CSSProperties } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
+import { istDateTime } from '../marketHours'
 
 type Entry = {
   id: string
@@ -91,7 +92,7 @@ export default function Activity() {
         const l = LABELS[e.event_type] || { label: e.event_type, color: '#64748b' }
         return (
           <div key={e.id} style={S.row}>
-            <div style={S.ts}>{e.ts ? new Date(e.ts).toLocaleString() : '—'}</div>
+            <div style={S.ts}>{e.ts ? istDateTime(e.ts) : '—'}</div>
             <div><span style={S.badge(l.color)}>{l.label}</span></div>
             <div>
               <div style={S.action}>{e.action || e.resource_type || ''}</div>

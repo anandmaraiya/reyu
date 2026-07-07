@@ -107,7 +107,7 @@ export default function PriceCharts() {
     return candles.map((c, i) => ({
       ts: c[0],
       label: daily
-        ? new Date(c[0] * 1000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+        ? new Date(c[0] * 1000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', timeZone: 'Asia/Kolkata' })
         : fmtIST(new Date(c[0] * 1000).toISOString()),
       close: +c[4].toFixed(2),
       volume: c[5] || 0,

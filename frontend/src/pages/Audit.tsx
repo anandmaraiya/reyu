@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { downloadCSV } from '../utils/csv'
+import { istDateTime } from '../marketHours'
 
 type AuditEntry = {
   ts: string
@@ -11,10 +12,7 @@ type AuditEntry = {
   results: any[]
 }
 
-const fmtDate = (s: string) => {
-  const d = new Date(s); if (isNaN(+d)) return s
-  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-}
+const fmtDate = (s: string) => istDateTime(s)
 
 function statusOf(a: AuditEntry): { label: string; cls: string } {
   if (a.dry_run) return { label: 'DRY', cls: 'neutral' }

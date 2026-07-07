@@ -22,6 +22,7 @@ import WalkForwardPanel from '../components/WalkForwardPanel'
 import RiskSimPanel from '../components/RiskSimPanel'
 import type { LegalDocMeta } from '../legal'
 import { chartTooltipStyles } from '../chartTheme'
+import { istDateTime, istDate, istTime } from '../marketHours'
 
 const num = (n: any, d = 2) =>
   n == null ? '—' : Number(n).toLocaleString('en-IN', { maximumFractionDigits: d })
@@ -476,7 +477,7 @@ function LiveTab({
           }}
         >
           Active run · {data.active_run.mode} · started{' '}
-          {new Date(data.active_run.started_at).toLocaleString()} ·{' '}
+          {istDateTime(data.active_run.started_at)} ·{' '}
           status{' '}
           <b style={{ color: 'var(--text)' }}>{data.active_run.status}</b>
         </div>
@@ -513,7 +514,7 @@ function LiveTab({
                   style={{ borderBottom: '1px solid var(--border)' }}
                 >
                   <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                    {new Date(p.entry_ts).toLocaleString()}
+                    {istDateTime(p.entry_ts)}
                   </td>
                   <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                     {p.leg?.symbol || '—'}
@@ -814,7 +815,7 @@ function PerformanceTab({
         >
           {runs.map((r) => (
             <option key={r.id} value={r.id}>
-              {new Date(r.started_at).toLocaleString()} · {r.mode} ·{' '}
+              {istDateTime(r.started_at)} · {r.mode} ·{' '}
               {r.status}
             </option>
           ))}
@@ -951,7 +952,7 @@ function RunsTab({
               }}
             >
               <td style={{ padding: '6px 8px' }}>
-                {new Date(r.started_at).toLocaleString()}
+                {istDateTime(r.started_at)}
               </td>
               <td style={{ padding: '6px 8px' }}>{r.mode}</td>
               <td style={{ padding: '6px 8px' }}>{r.status}</td>
@@ -1151,7 +1152,7 @@ function RunTradesGroup({
           {run.status}
         </span>
         <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-          {new Date(run.started_at).toLocaleString()}
+          {istDateTime(run.started_at)}
         </span>
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: 'var(--muted)' }}>
@@ -1255,17 +1256,17 @@ function RunTradesGroup({
                         }}
                       >
                         <td style={{ padding: '4px 8px' }}>
-                          {new Date(t.entry_ts).toLocaleTimeString()}
+                          {istTime(t.entry_ts)}
                           <div
                             style={{ fontSize: 10, color: 'var(--muted)' }}
                           >
-                            {new Date(t.entry_ts).toLocaleDateString()}
+                            {istDate(t.entry_ts)}
                           </div>
                         </td>
                         <td style={{ padding: '4px 8px' }}>
                           {open
                             ? <span style={{ color: '#f0a830', fontWeight: 600 }}>OPEN</span>
-                            : new Date(t.exit_ts!).toLocaleTimeString()}
+                            : istTime(t.exit_ts!)}
                         </td>
                         <td
                           style={{

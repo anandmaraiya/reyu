@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import { useToast } from '../toast'
 import { detectStrategyName } from '../components/StrategyVisuals'
+import { istDateTime } from '../marketHours'
 
 const num = (n: any, d = 2) => n == null ? '—' : Number(n).toLocaleString(undefined, { maximumFractionDigits: d })
 
@@ -141,7 +142,7 @@ export default function Saved() {
                       style={{ marginLeft: 'auto', fontSize: 10 }}>{cat}</span>
               </div>
               <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                {detected} · {s.underlying}<br />saved {new Date(s.saved_at).toLocaleString()}
+                {detected} · {s.underlying}<br />saved {istDateTime(s.saved_at)}
               </div>
               <MiniPayoffSparkline legs={s.legs} />
               <div style={{ fontSize: 11, color: 'var(--muted)' }}>

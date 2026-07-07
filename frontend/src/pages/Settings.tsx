@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import { useToast } from '../toast'
 import { useAuth } from '../context/AuthContext'
+import { istDateTime, istDate, istTime } from '../marketHours'
 
 type Tab = 'account' | 'trading' | 'notify' | 'api_keys' | 'event_subs' | 'appearance' | 'shortcuts'
 
@@ -148,7 +149,7 @@ export default function Settings({ theme, setTheme }: { theme: string; setTheme:
                     <tr><td>Fyers</td><td className={status?.fyers ? 'bull' : 'bear'}>{status?.fyers ? 'connected (live)' : 'demo mode'}</td></tr>
                     <tr><td>Redis</td><td className={status?.redis ? 'bull' : 'bear'}>{status?.redis ? 'ok' : 'down'}</td></tr>
                     <tr><td>Postgres</td><td className={status?.postgres ? 'bull' : 'bear'}>{status?.postgres ? 'ok' : 'down'}</td></tr>
-                    <tr><td>Last snapshot</td><td>{status?.last_snapshot_at ? new Date(status.last_snapshot_at).toLocaleString() : '—'}</td></tr>
+                    <tr><td>Last snapshot</td><td>{status?.last_snapshot_at ? istDateTime(status.last_snapshot_at) : '—'}</td></tr>
                     <tr><td>Tracked symbols</td><td>{status?.tracked_symbols ?? 0}</td></tr>
                     <tr><td>Subscription</td><td><span className="tag" style={{ background: 'rgba(96,165,250,.15)', color: 'var(--accent)' }}>{tierLabel}</span></td></tr>
                   </tbody>
@@ -389,8 +390,8 @@ function ApiKeysPanel({ toast }: { toast: any }) {
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 600 }}>{k.label}</div>
               <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                <code>{k.key_preview}</code> · created {new Date(k.created_at).toLocaleDateString()}
-                {k.last_used && ` · last used ${new Date(k.last_used).toLocaleString()}`}
+                <code>{k.key_preview}</code> · created {istDate(k.created_at)}
+                {k.last_used && ` · last used ${istDateTime(k.last_used)}`}
               </div>
             </div>
             <div style={{ textAlign: 'right', marginRight: 8 }}>
@@ -428,7 +429,7 @@ function ApiKeyUsageRow({ keyId }: { keyId: string }) {
     <div style={{ marginTop: 6 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--muted)' }}>
         <span>{usage.used.toLocaleString()} / {usage.limit > 0 ? usage.limit.toLocaleString() : '∞'} requests today</span>
-        <span>Resets {new Date(usage.reset_at * 1000).toLocaleTimeString()}</span>
+        <span>Resets {istTime(usage.reset_at * 1000)}</span>
       </div>
       <div style={{ height: 3, background: 'var(--border)', borderRadius: 2, marginTop: 2 }}>
         <div style={{ width: `${pct}%`, height: '100%', background: barColor, borderRadius: 2, transition: 'width .3s' }} />

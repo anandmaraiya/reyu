@@ -9,6 +9,7 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth, api } from '../context/AuthContext'
+import { istDate } from '../marketHours'
 
 // ─── Plan data ────────────────────────────────────────────────────────────────
 
@@ -283,9 +284,7 @@ export default function Subscription() {
               <strong>{PLANS.find(p => p.id === tier)?.name ?? tier} plan active</strong>
               {subStatus?.subscription_ends_at && (
                 <div className="sub-active-sub">
-                  Renews {new Date(subStatus.subscription_ends_at).toLocaleDateString('en-IN', {
-                    year: 'numeric', month: 'short', day: 'numeric',
-                  })}
+                  Renews {istDate(subStatus.subscription_ends_at)}
                   {subStatus.pending_plan ? ` · Changing to ${subStatus.pending_plan} at period end` : ''}
                 </div>
               )}

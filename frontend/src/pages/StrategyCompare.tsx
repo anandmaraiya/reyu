@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 import { api } from '../api'
 import { chartTooltipStyles } from '../chartTheme'
+import { istDate } from '../marketHours'
 
 const num = (n: any, d = 2) =>
   n == null ? '—' : Number(n).toLocaleString('en-IN', { maximumFractionDigits: d })
@@ -176,7 +177,7 @@ export default function StrategyCompare() {
                               onChange={() => toggle(r.id)}
                             />
                             <span style={{ flex: 1 }}>
-                              {new Date(r.started_at).toLocaleDateString()} ·{' '}
+                              {istDate(r.started_at)} ·{' '}
                               {r.mode}
                             </span>
                             <span

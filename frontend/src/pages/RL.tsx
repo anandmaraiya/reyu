@@ -10,6 +10,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../context/AuthContext'
+import { istAgo, istTime } from '../marketHours'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -76,14 +77,8 @@ function pct(n: number | null | undefined): string {
   return `${(n * 100).toFixed(1)}%`
 }
 
-function timeAgo(iso: string | null): string {
-  if (!iso) return '—'
-  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
-  if (secs < 60) return `${secs}s ago`
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
-  return `${Math.floor(secs / 86400)}d ago`
-}
+// Relative time, parsing the backend's naive-UTC strings correctly (IST-safe).
+const timeAgo = istAgo
 
 // ─── EquityCurve ─────────────────────────────────────────────────────────────
 
@@ -548,7 +543,7 @@ export default function RL() {
                           {t.leg_symbol || `${t.strike}${t.option_type}`}
                         </td>
                         <td style={{ color: 'var(--color-text-tertiary)' }}>
-                          {t.entry_ts ? new Date(t.entry_ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                          {t.entry_ts ? istTime(t.entry_ts) : '—'}
                         </td>
                         <td>₹{fmt(t.entry_premium)}</td>
                         <td style={{ color: 'var(--color-text-secondary)' }}>

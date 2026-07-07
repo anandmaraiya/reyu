@@ -14,6 +14,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import PageHelp from '../components/PageHelp'
+import { istDateTime, istTime } from '../marketHours'
 
 type DailyFills = {
   days: number
@@ -455,7 +456,7 @@ export default function DataAdmin() {
                     {r.ok ? 'OK' : 'FAIL'}
                   </td>
                   <td style={{ ...S.td, textAlign: 'right' }}>{r.duration_sec}s</td>
-                  <td style={S.td}>{new Date(r.ended_at).toLocaleTimeString()}</td>
+                  <td style={S.td}>{istTime(r.ended_at)}</td>
                   <td style={{ ...S.td, color: 'var(--danger)' }}>{r.error || ''}</td>
                 </tr>
               ))}
@@ -602,7 +603,7 @@ export default function DataAdmin() {
                 return (
                   <tr key={e.id}>
                     <td style={{ ...S.td, whiteSpace: 'nowrap', color: 'var(--text-secondary)', fontSize: 11 }}>
-                      {new Date(e.ts).toLocaleString()}
+                      {istDateTime(e.ts)}
                     </td>
                     <td style={{
                       ...S.td, fontWeight: 600,
@@ -649,7 +650,7 @@ export default function DataAdmin() {
                       {j.trigger}
                     </td>
                     <td style={S.td}>
-                      {j.next_run_time ? new Date(j.next_run_time).toLocaleString() : '—'}
+                      {j.next_run_time ? istDateTime(j.next_run_time) : '—'}
                     </td>
                   </tr>
                 ))}
