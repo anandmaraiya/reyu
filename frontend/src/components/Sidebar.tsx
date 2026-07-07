@@ -42,24 +42,24 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'chain',     label: 'Option Chain',  icon: <ChainIcon />,     path: '/chain' },
   { id: 'positions', label: 'Positions',     icon: <PositionsIcon />, path: '/positions' },
   { id: 'portfolio', label: 'Portfolio',     icon: <PortfolioIcon />, path: '/portfolio' },
-  { id: 'journal',   label: 'Journal',       icon: <PortfolioIcon />, path: '/journal' },
-  { id: 'templates', label: 'Templates',     icon: <SavedIcon />,     path: '/templates', group: 'My Strategies' },
-  { id: 'catalog',   label: 'Catalog',       icon: <ChainIcon />,     path: '/catalog',   group: 'My Strategies' },
+  { id: 'journal',   label: 'Journal',       icon: <JournalIcon />,   path: '/journal' },
+  { id: 'templates', label: 'Templates',     icon: <TemplateIcon />,  path: '/templates', group: 'My Strategies' },
+  { id: 'catalog',   label: 'Catalog',       icon: <CatalogIcon />,   path: '/catalog',   group: 'My Strategies' },
   { id: 'strategies',label: 'Saved',         icon: <SavedIcon />,     path: '/strategies',group: 'My Strategies' },
   { id: 'backtest',  label: 'Backtest',      icon: <BacktestIcon />,  path: '/backtest',  group: 'My Strategies' },
   { id: 'compare',   label: 'Compare',       icon: <CompareIcon />,   path: '/compare',   group: 'My Strategies' },
   { id: 'scalping',  label: 'Scalping',      icon: <ScalpIcon />,     path: '/scalping',  group: 'Watchlist' },
-  { id: 'portfolios',label: 'Portfolios',    icon: <PortfolioIcon />, path: '/portfolios',group: 'Watchlist' },
+  { id: 'portfolios',label: 'Portfolios',    icon: <BasketIcon />,    path: '/portfolios',group: 'Watchlist' },
   { id: 'orders',    label: 'Order Audit',   icon: <OrderIcon />,     path: '/orders',    group: 'Watchlist' },
   { id: 'brokers',   label: 'Brokers',       icon: <BrokersIcon />,   path: '/brokers',   group: 'Account' },
-  { id: 'activity',  label: 'My Activity',   icon: <OrderIcon />,     path: '/activity',  group: 'Account' },
+  { id: 'activity',  label: 'My Activity',   icon: <ActivityIcon />,  path: '/activity',  group: 'Account' },
   { id: 'subscribe', label: 'Subscription',  icon: <SubIcon />,       path: '/subscribe', group: 'Account' },
   { id: 'settings',  label: 'Settings',      icon: <SettingsIcon />,  path: '/settings',  group: 'Account' },
-  { id: 'legal',     label: 'Legal',         icon: <SettingsIcon />,  path: '/legal',     group: 'Account' },
+  { id: 'legal',     label: 'Legal',         icon: <LegalIcon />,     path: '/legal',     group: 'Account' },
   { id: 'rl',        label: 'AI Auto-Trader', icon: <RLIcon />,       path: '/rl',        group: 'Account', badge: 'LIVE' },
-  { id: 'rl-lab',    label: 'Strategy Lab',  icon: <RLIcon />,        path: '/rl/lab',    group: 'Account' },
+  { id: 'rl-lab',    label: 'Strategy Lab',  icon: <LabIcon />,       path: '/rl/lab',    group: 'Account' },
   // Superadmin only — Sidebar filters this for non-superadmins.
-  { id: 'data-admin',label: 'Data Capture',  icon: <SettingsIcon />,  path: '/admin/data', group: 'Admin', badge: 'ADMIN' },
+  { id: 'data-admin',label: 'Data Capture',  icon: <DataIcon />,      path: '/admin/data', group: 'Admin', badge: 'ADMIN' },
 ]
 
 export function Sidebar({ mobileOpen, onMobileClose }: { mobileOpen?: boolean; onMobileClose?: () => void } = {}) {
@@ -218,6 +218,14 @@ function BrokersIcon()  { return <svg width="18" height="18" viewBox="0 0 24 24"
 function SubIcon()      { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> }
 function SettingsIcon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg> }
 function RLIcon()       { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 2a10 10 0 100 20A10 10 0 0012 2z"/><path d="M12 6v6l4 2"/></svg> }
+function JournalIcon()  { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 4a2 2 0 012-2h12a1 1 0 011 1v18a1 1 0 01-1 1H6a2 2 0 01-2-2z"/><path d="M4 18a2 2 0 012-2h13"/><line x1="8" y1="7" x2="15" y2="7"/><line x1="8" y1="11" x2="13" y2="11"/></svg> }
+function TemplateIcon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg> }
+function CatalogIcon()  { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 9l1.2-4.4A1 1 0 015.16 4h13.68a1 1 0 01.96.6L21 9"/><path d="M4 9v10a1 1 0 001 1h14a1 1 0 001-1V9"/><path d="M9 20v-6h6v6"/></svg> }
+function BasketIcon()   { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg> }
+function ActivityIcon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> }
+function LegalIcon()    { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><line x1="12" y1="3" x2="12" y2="21"/><line x1="7" y1="7" x2="17" y2="7"/><path d="M7 7l-3 6a3 3 0 006 0z"/><path d="M17 7l-3 6a3 3 0 006 0z"/></svg> }
+function DataIcon()     { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg> }
+function LabIcon()      { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 3h6"/><path d="M10 3v6l-4.5 8.5A2 2 0 007.3 21h9.4a2 2 0 001.8-3L14 9V3"/><line x1="8" y1="15" x2="16" y2="15"/></svg> }
 function LogoutIcon()   { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> }
 function LoginIcon()    { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> }
 function CollapseIcon({ flipped }: { flipped: boolean }) {
