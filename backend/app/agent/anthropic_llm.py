@@ -150,6 +150,14 @@ async def chat_with_claude(
 
             if r.status_code != 200:
                 log.warning("Anthropic %d: %s", r.status_code, r.text[:400])
+                body_l = (r.text or "").lower()
+                # Out-of-credits surfaces as a 400 but is an account/billing
+                # issue, not a bad request — call it out loudly for the
+                # operator and give the user a plain "unavailable" message.
+                if "credit balance is too low" in body_l or "plans & billing" in body_l:
+                    log.error("Anthropic OUT OF CREDITS — top up at console.anthropic.com → Plans & Billing")
+                    return {"text": "Reyu's AI service is temporarily unavailable. We're on it — please try again a bit later.",
+                            "busy": True}
                 if r.status_code in (429, 529):
                     return {"text": "Reyu's getting a lot of requests right now — give me a few seconds and ask again.",
                             "busy": True}
