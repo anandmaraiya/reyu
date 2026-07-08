@@ -40,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.analytics.greeks import bs_price
 from app.db import RLPolicy
 from app.rl.calendar import iter_trading_days
-from app.rl.env import DEFAULT_TARGET_PCT, DEFAULT_STOP_PCT, reward_for
+from app.rl.env import DEFAULT_TARGET_PCT, DEFAULT_STOP_PCT, reward_for, money_reward, net_pnl_inr
 from app.rl.features import FEATURE_DIM
 from app.rl.policy import Policy, ACTIONS, adjusted_epsilon
 from app.fyers import client as fy
@@ -167,6 +167,7 @@ async def _simulate_session(
     min_conviction: float = 0.0,
     lr: float | None = None,
     weight_decay: float = 0.0,
+    lot_size: int = 1,
 ) -> tuple[list[dict], int, int, int, float]:
     """Replay one trading day. Returns (trade_dicts, wins, losses, timeouts, cum_reward)."""
     if len(candles_5m) < 10:
@@ -212,13 +213,16 @@ async def _simulate_session(
             exit_prem = prem_j
 
         pnl_pct = (exit_prem / entry_prem - 1.0) * 100
-        reward = reward_for(status, pnl_pct, target_pct, stop_pct)
+        # Money-based reward: the policy learns to maximise net rupees, not an
+        # abstract bracket score (see env.money_reward).
+        reward = money_reward(entry_prem, exit_prem, lot_size)
+        pnl_inr = net_pnl_inr(entry_prem, exit_prem, lot_size)
         pol.update(features, action_idx, reward, lr=lr, weight_decay=weight_decay)
         trade_dicts.append({
             "entry_idx": idx, "exit_idx": j,
             "entry_prem": entry_prem, "exit_prem": exit_prem,
             "action": action, "status": status,
-            "pnl_pct": pnl_pct, "reward": reward,
+            "pnl_pct": pnl_pct, "reward": reward, "net_pnl_inr": round(pnl_inr, 2),
         })
         cum_reward += reward
         if status == "TP":
@@ -254,6 +258,9 @@ async def backfill_underlying(
     target_pct = row.target_pct or DEFAULT_TARGET_PCT
     stop_pct = row.stop_pct or DEFAULT_STOP_PCT
     eps = epsilon if epsilon is not None else (row.epsilon or 0.10)
+    # Lot size drives the money reward — DB (Fyers-synced) first, then map.
+    from app.fyers.symbols import resolve as _resolve_sym
+    lot_size = (await _resolve_sym(underlying)).lot_size or 1
 
     today = datetime.utcnow().date()
     start = today - timedelta(days=days + 10)        # extra slack for weekends
@@ -274,7 +281,7 @@ async def backfill_underlying(
             continue
         sessions += 1
         tr_dicts, w, l, to, r = await _simulate_session(
-            candles, pol, target_pct, stop_pct, eps, underlying
+            candles, pol, target_pct, stop_pct, eps, underlying, lot_size=lot_size
         )
         trades += len(tr_dicts); wins += w; losses += l; timeouts += to; cum_reward += r
 
@@ -319,6 +326,7 @@ def _seq_simulate_session(
     weight_decay: float = 0.0,
     seed: int | None = None,
     pricer=None,                          # optional real-data pricer
+    lot_size: int = 1,
 ) -> list[dict]:
     """RL-side decider: in train mode uses ε-greedy + on_close hook
     to call Policy.update(); in test mode is greedy + conviction filter.
@@ -343,8 +351,11 @@ def _seq_simulate_session(
 
     def on_close(trade: _SimTrade, features: list[float]) -> None:
         if train:
+            # Override the engine's bracket reward with money reward so the
+            # bandit optimises actual rupees (lot-size aware, after costs).
+            r = money_reward(trade.entry_prem, trade.exit_prem, lot_size)
             pol.update(features, trade.entry_signal["action_idx"],
-                       trade.reward, lr=lr, weight_decay=weight_decay)
+                       r, lr=lr, weight_decay=weight_decay)
 
     sim_kwargs = dict(
         decide=decide, target_pct=target_pct, stop_pct=stop_pct,
@@ -355,12 +366,16 @@ def _seq_simulate_session(
     if pricer is not None:
         sim_kwargs["pricer"] = pricer
     sim_trades = _engine_simulate_session(candles_5m, **sim_kwargs)
-    # Preserve old dict-shaped contract for callers in train_test_underlying
+    # Preserve old dict-shaped contract for callers in train_test_underlying.
+    # `reward` is re-expressed in money units (matches what the policy trained
+    # on); `net_pnl_inr` is the raw rupee figure for reporting.
     return [{
         "entry_idx": t.entry_idx, "exit_idx": t.exit_idx,
         "entry_prem": t.entry_prem, "exit_prem": t.exit_prem,
         "action": t.action, "status": t.status,
-        "pnl_pct": t.pnl_pct, "reward": t.reward,
+        "pnl_pct": t.pnl_pct,
+        "reward": money_reward(t.entry_prem, t.exit_prem, lot_size),
+        "net_pnl_inr": round(net_pnl_inr(t.entry_prem, t.exit_prem, lot_size), 2),
     } for t in sim_trades]
 
 
@@ -401,6 +416,7 @@ async def _evaluate_session(
     target_pct: float, stop_pct: float,
     underlying: str,
     min_conviction: float = 0.0,
+    lot_size: int = 1,
 ) -> dict[str, float]:
     """Like _simulate_session but read-only — epsilon=0, no policy update.
     Reports per-session stats including total %P&L (sum of pnl_pct)."""
@@ -451,7 +467,7 @@ async def _evaluate_session(
             exit_prem = prem_j
 
         pnl_pct = (exit_prem / entry_prem - 1.0) * 100
-        cum_reward += reward_for(status, pnl_pct, target_pct, stop_pct)
+        cum_reward += money_reward(entry_prem, exit_prem, lot_size)
         cum_pnl_pct += pnl_pct
         trades += 1
         if status == "TP": wins += 1
@@ -584,6 +600,7 @@ async def train_test_underlying(
                     candles, pol, target_pct, stop_pct, eps, underlying,
                     min_conviction=min_conviction, train=True, lr=lr,
                     weight_decay=weight_decay, pricer=session_pricer,
+                    lot_size=lot_size,
                 )
                 if cache:
                     pricer_coverage["real_hits"] += cache.real_hits
@@ -592,7 +609,7 @@ async def train_test_underlying(
                 tr, _w, _l, _to, _r = await _simulate_session(
                     candles, pol, target_pct, stop_pct, eps, underlying,
                     min_conviction=min_conviction, lr=lr,
-                    weight_decay=weight_decay,
+                    weight_decay=weight_decay, lot_size=lot_size,
                 )
             ep_trades.extend(tr)
         # Only retain the last epoch's trades for stats reporting
@@ -617,7 +634,7 @@ async def train_test_underlying(
             tr = _seq_simulate_session(
                 candles, pol, target_pct, stop_pct, 0.0, underlying,
                 min_conviction=min_conviction, train=False,
-                pricer=session_pricer,
+                pricer=session_pricer, lot_size=lot_size,
             )
             if cache:
                 pricer_coverage["real_hits"] += cache.real_hits
@@ -625,7 +642,7 @@ async def train_test_underlying(
         else:
             tr, _w, _l, _to, _r = await _simulate_session(
                 candles, pol, target_pct, stop_pct, 0.0, underlying,
-                min_conviction=min_conviction,
+                min_conviction=min_conviction, lot_size=lot_size,
             )
         test_trades_all.extend(tr)
 

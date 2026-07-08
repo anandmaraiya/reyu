@@ -36,17 +36,51 @@ IST = timezone(timedelta(hours=5, minutes=30))
 DEFAULT_TARGET_PCT = 0.20
 DEFAULT_STOP_PCT = 0.20
 
+# ── Money-based reward ──────────────────────────────────────────────
+# The bandit optimises ACTUAL rupees, not an abstract bracket score. One
+# reward unit = REWARD_UNIT_INR of net P&L, so a ₹1,000 winning trade earns
+# +1.0 and a ₹250 win earns +0.25 — the policy naturally prefers bigger,
+# cheaper-to-win money over tiny scalps. The ~1k divisor keeps the linear
+# policy's gradient in a sane range (typical NIFTY 1-lot trade is a few
+# hundred to a few thousand rupees).
+REWARD_UNIT_INR = 1000.0
+
+# Light round-trip friction so the policy learns AFTER costs, not gross.
+_SLIPPAGE_FRAC = 0.0005      # ~5bps of turnover, entry+exit
+_FLAT_COST_INR = 20.0        # brokerage/charges proxy, per trade
+
+
+def trade_cost_inr(entry_prem: float, exit_prem: float, lot_size: int, qty: int = 1) -> float:
+    """Round-trip cost in rupees for a single bought-option trade."""
+    turnover = (abs(entry_prem) + abs(exit_prem)) * lot_size * qty
+    return turnover * _SLIPPAGE_FRAC + _FLAT_COST_INR * qty
+
+
+def money_reward(entry_prem: float, exit_prem: float, lot_size: int,
+                 qty: int = 1, apply_cost: bool = True) -> float:
+    """Reward = net rupee P&L of the trade, scaled to REWARD_UNIT_INR.
+
+    We always BUY a directional option (CE for LONG, PE for SHORT), so the
+    P&L is simply (exit − entry) × lot × qty. Lot-size aware: the same +20%
+    move on a fat premium is worth more money — and more reward — than on a
+    cheap one, which is exactly what we want the policy to learn."""
+    gross = (exit_prem - entry_prem) * lot_size * qty
+    cost = trade_cost_inr(entry_prem, exit_prem, lot_size, qty) if apply_cost else 0.0
+    return (gross - cost) / REWARD_UNIT_INR
+
+
+def net_pnl_inr(entry_prem: float, exit_prem: float, lot_size: int,
+                qty: int = 1, apply_cost: bool = True) -> float:
+    """The rupee figure behind money_reward (for reporting / trade rows)."""
+    gross = (exit_prem - entry_prem) * lot_size * qty
+    cost = trade_cost_inr(entry_prem, exit_prem, lot_size, qty) if apply_cost else 0.0
+    return gross - cost
+
 
 def reward_for(status: str, pnl_pct: float | None,
                target_pct: float, stop_pct: float) -> float:
-    """Reward shape that scales with bracket asymmetry.
-
-    TP hit       → +1.0
-    SL hit       → -(stop_pct / target_pct)
-                   (1:1 R/R → -1, 2:1 R/R → -0.5, 1:2 R/R → -2)
-    TIMEOUT      → clamp(pnl_pct / target_pct, -1, +1)
-                   gives a graded signal even from unfilled brackets
-    """
+    """LEGACY bracket-normalised reward (TP +1 / SL −ratio). Kept for
+    backward-compatible callers; the RL bandit now trains on money_reward."""
     if status == "TP":
         return 1.0
     if status == "SL":
@@ -55,6 +89,23 @@ def reward_for(status: str, pnl_pct: float | None,
         scaled = (pnl_pct / 100.0) / max(target_pct, 1e-6)
         return max(-1.0, min(1.0, scaled))
     return 0.0
+
+
+_LOT_CACHE: dict[str, int] = {}
+
+
+async def _lot_size(underlying: str) -> int:
+    """Contracts per lot for the underlying — DB (Fyers-synced) first, then
+    the hardcoded index map. Cached per process."""
+    if underlying in _LOT_CACHE:
+        return _LOT_CACHE[underlying]
+    try:
+        from app.fyers.symbols import resolve
+        lot = (await resolve(underlying)).lot_size or 1
+    except Exception:
+        lot = 1
+    _LOT_CACHE[underlying] = int(lot)
+    return int(lot)
 
 
 def _pick_atm_leg(chain: dict, side: str) -> dict | None:
@@ -164,7 +215,8 @@ async def sweep_open_trades(s: AsyncSession) -> dict[str, int]:
             elif is_after_close:
                 status = "TIMEOUT"; tout += 1
             if status:
-                reward = reward_for(status, pnl_pct, target_pct, stop_pct)
+                lot = await _lot_size(t.underlying)
+                reward = money_reward(t.entry_premium, ltp, lot, qty=t.qty or 1)
                 await s.execute(
                     update(RLTrade).where(RLTrade.id == t.id).values(
                         status=status, exit_ts=datetime.utcnow(),
