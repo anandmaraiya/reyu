@@ -150,8 +150,14 @@ async def enter_trade(
     )).scalar_one_or_none()
     target_pct = (pol_row.target_pct if pol_row and pol_row.target_pct else DEFAULT_TARGET_PCT)
     stop_pct = (pol_row.stop_pct if pol_row and pol_row.stop_pct else DEFAULT_STOP_PCT)
+    # Absolute premium-point brackets override % when the policy has them set.
+    target_abs = pol_row.target_abs if pol_row else None
+    stop_abs = pol_row.stop_abs if pol_row else None
 
     entry = leg["ltp"]
+    tp_prem = round(entry + target_abs, 2) if target_abs else round(entry * (1.0 + target_pct), 2)
+    sl_prem = (round(max(entry - stop_abs, 0.05), 2) if stop_abs
+               else round(entry * (1.0 - stop_pct), 2))
     trade = RLTrade(
         id=str(uuid.uuid4()),
         underlying=underlying,
@@ -161,8 +167,8 @@ async def enter_trade(
         option_type=side,
         qty=qty,
         entry_premium=entry,
-        target_premium=round(entry * (1.0 + target_pct), 2),
-        stop_premium=round(entry * (1.0 - stop_pct), 2),
+        target_premium=tp_prem,
+        stop_premium=sl_prem,
         features=json.dumps(features),
         paper=paper,
         action_logprob=action_logprob,

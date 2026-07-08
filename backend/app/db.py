@@ -354,6 +354,10 @@ class RLPolicy(Base):
     enabled = Column(Boolean, default=True)
     target_pct = Column(Float, default=0.20)          # TP at +20% on premium
     stop_pct = Column(Float, default=0.20)            # SL at -20% on premium (1:1)
+    # Absolute premium-point brackets. When set they OVERRIDE the % brackets
+    # at entry (target_premium = entry + target_abs, etc.). Null = use %.
+    target_abs = Column(Float, nullable=True)
+    stop_abs = Column(Float, nullable=True)
     min_conviction = Column(Float, default=0.0)       # greedy-mode FLAT filter; tuned per symbol
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -627,6 +631,12 @@ async def init_db() -> None:
         ))
         await conn.execute(text(
             "ALTER TABLE rl_policy ADD COLUMN IF NOT EXISTS min_conviction FLOAT DEFAULT 0.0"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE rl_policy ADD COLUMN IF NOT EXISTS target_abs FLOAT"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE rl_policy ADD COLUMN IF NOT EXISTS stop_abs FLOAT"
         ))
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS rl_trade (

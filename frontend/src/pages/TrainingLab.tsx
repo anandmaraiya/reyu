@@ -127,12 +127,13 @@ function BanditTrainer() {
     if (symList.length !== 1) { setErr('Teach-and-keep works on one symbol at a time — leave just one in the box.'); return }
     setBusy('save'); setErr(''); setSaved(null)
     try {
-      const q = new URLSearchParams({
+      const p: Record<string, string> = {
         underlying: symList[0], total_days: String(totalDays),
         target_pct: String(targetPct), stop_pct: String(stopPct),
         min_conviction: String(minConv), lr: String(lr), epochs: String(epochs),
-      })
-      const { data } = await api.post(`/api/rl/train-and-save?${q}`)
+      }
+      if (bracketMode === 'abs') { p.target_abs = String(targetAbs); p.stop_abs = String(stopAbs) }
+      const { data } = await api.post(`/api/rl/train-and-save?${new URLSearchParams(p)}`)
       setSaved(`Done — ${data.underlying} learned from ${data.train_trades ?? 'the'} past trades and is saved. Reyu’s paper engine will now use it.`)
     } catch (e: any) {
       setErr(e?.response?.data?.detail || e?.message || 'Couldn’t save — please try again.')

@@ -40,6 +40,7 @@ async def list_policies(s: AsyncSession = Depends(get_session)):
         "cum_reward": r.cum_reward, "epsilon": r.epsilon,
         "enabled": r.enabled,
         "target_pct": r.target_pct, "stop_pct": r.stop_pct,
+        "target_abs": r.target_abs, "stop_abs": r.stop_abs,
         "last_trained_at": r.last_trained_at.isoformat() if r.last_trained_at else None,
     } for r in rows]
 
@@ -205,10 +206,15 @@ async def set_brackets(
     stop_pct: float = Query(..., gt=0, lt=2.0),
     min_conviction: float | None = Query(None, ge=0.0, le=0.9,
         description="Optional — greedy-mode FLAT filter threshold"),
+    target_abs: float | None = Query(None, ge=0,
+        description="TP as absolute premium points (₹); 0 clears it back to %"),
+    stop_abs: float | None = Query(None, ge=0,
+        description="SL as absolute premium points (₹); 0 clears it back to %"),
     s: AsyncSession = Depends(get_session),
 ):
-    """Update the policy's target / stop percentages and (optionally) the
-    live conviction filter."""
+    """Update the policy's target / stop brackets and (optionally) the live
+    conviction filter. Set target_abs/stop_abs to switch live exits to
+    absolute points; pass 0 to clear them back to percentage."""
     row = (await s.execute(select(RLPolicy).where(RLPolicy.underlying == underlying))).scalar_one_or_none()
     if not row:
         row = RLPolicy(underlying=underlying, weights="{}", epsilon=0.10, enabled=True,
@@ -220,9 +226,14 @@ async def set_brackets(
         row.stop_pct = stop_pct
         if min_conviction is not None:
             row.min_conviction = min_conviction
+    if target_abs is not None:
+        row.target_abs = target_abs or None      # 0 → clear
+    if stop_abs is not None:
+        row.stop_abs = stop_abs or None
     await s.commit()
     return {"ok": True, "underlying": underlying,
             "target_pct": target_pct, "stop_pct": stop_pct,
+            "target_abs": row.target_abs, "stop_abs": row.stop_abs,
             "min_conviction": row.min_conviction}
 
 
@@ -236,6 +247,10 @@ async def train_and_save(
     lr: float = Query(0.10, gt=0, lt=1),
     epochs: int = Query(1, ge=1, le=20),
     weight_decay: float = Query(0.0, ge=0.0, le=0.1),
+    target_abs: float | None = Query(None, gt=0,
+        description="TP as absolute premium points (₹); overrides target_pct in live too"),
+    stop_abs: float | None = Query(None, gt=0,
+        description="SL as absolute premium points (₹); overrides stop_pct in live too"),
     s: AsyncSession = Depends(get_session),
 ):
     """Train the policy on the full window (no test split — every day
@@ -249,11 +264,15 @@ async def train_and_save(
         target_pct_override=target_pct, stop_pct_override=stop_pct,
         lr=lr, epochs=epochs, sequential=True,
         weight_decay=weight_decay,
+        target_abs=target_abs, stop_abs=stop_abs,
     )
-    # Persist the live-only config so inference uses these brackets / filter
+    # Persist the live-only config so inference uses these brackets / filter.
+    # Absolute brackets, when given, are stored and OVERRIDE the % at entry.
     row = (await s.execute(select(RLPolicy).where(RLPolicy.underlying == underlying))).scalar_one()
     row.target_pct = target_pct
     row.stop_pct = stop_pct
+    row.target_abs = target_abs
+    row.stop_abs = stop_abs
     row.min_conviction = min_conviction
     row.enabled = True
     await s.commit()
@@ -264,6 +283,7 @@ async def train_and_save(
         "train_trades": result.train_trades,
         "train_win_rate": result.train_win_rate,
         "saved": {"target_pct": target_pct, "stop_pct": stop_pct,
+                  "target_abs": target_abs, "stop_abs": stop_abs,
                   "min_conviction": min_conviction, "lr": lr, "epochs": epochs},
         "holdout_roi": roi,
     }
