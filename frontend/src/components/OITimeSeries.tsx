@@ -14,7 +14,7 @@ import {
   CartesianGrid, Legend, ReferenceLine,
 } from 'recharts'
 import { chartTooltipStyles } from '../chartTheme'
-import { marketHoursOnly } from '../marketHours'
+import { marketHoursOnly, istDate } from '../marketHours'
 
 const fmtTime = (iso: string) => {
   try {
@@ -135,7 +135,25 @@ export default function OITimeSeries({ symbol, chain, interval = '5m', defaultMo
     })
 
   const hasData = chartData.length > 0
-  const sessionLabel = hasData ? `${chartData[0]?.ts} → ${chartData[chartData.length - 1]?.ts}` : 'no data yet today'
+
+  // Data-sanctity stamp: the ACTUAL date of the latest in-session bar (IST),
+  // plus whether it's genuinely today. Stale data (e.g. yesterday's session)
+  // still passes the market-hours filter by time-of-day, so surfacing the
+  // real date is the only way to catch it.
+  const sessionMeta = useMemo(() => {
+    const rows = (mode === 'UNDERLYING' ? under?.rows : optd?.rows) ?? []
+    const inSession = marketHoursOnly(rows as { ts: string }[])
+    if (!inSession.length) return null
+    const firstTs = inSession[0].ts
+    const lastTs = inSession[inSession.length - 1].ts
+    const dateLabel = istDate(lastTs)
+    return {
+      dateLabel,
+      isToday: dateLabel === istDate(new Date()),
+      firstTime: fmtTime(firstTs),
+      lastTime: fmtTime(lastTs),
+    }
+  }, [mode, under, optd])
 
   return (
     <div>
@@ -156,7 +174,15 @@ export default function OITimeSeries({ symbol, chain, interval = '5m', defaultMo
           </select>
         )}
         <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: mode === 'OPTION' ? 0 : 'auto' }}>
-          Today's session · {sessionLabel}
+          {sessionMeta ? (
+            <>
+              <strong style={{ color: 'var(--text)' }}>{sessionMeta.dateLabel}</strong>
+              {' · '}{sessionMeta.firstTime} → {sessionMeta.lastTime} IST
+              {sessionMeta.isToday
+                ? <span style={{ color: 'var(--pos, #16a34a)', marginLeft: 6 }}>● live today</span>
+                : <span style={{ color: 'var(--danger, #e05252)', marginLeft: 6, fontWeight: 600 }}>⚠ not today — stale data</span>}
+            </>
+          ) : 'no data yet today'}
         </span>
       </div>
 
