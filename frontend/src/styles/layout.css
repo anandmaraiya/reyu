@@ -420,22 +420,27 @@
   /* App shell rearranges */
   .app-body { position: relative; }
 
-  /* Sidebar becomes an off-canvas drawer */
-  .sidebar {
+  /* Sidebar becomes an off-canvas drawer.
+     NOTE: selectors are scoped under .app-body to out-specify the flat
+     `.sidebar { position: relative }` rule in the legacy styles.css, which
+     is imported AFTER layout.css and would otherwise win the cascade and
+     keep the drawer in-flow (invisible off-screen). */
+  .app-body .sidebar {
     position: fixed;
     top: 0;
     left: 0;
+    height: 100vh;          /* fallback for browsers without dvh */
     height: 100dvh;
     z-index: 100;
     transform: translateX(-100%);
     transition: transform 200ms var(--ease-out);
     box-shadow: var(--shadow-lg);
   }
-  .sidebar.sidebar-mobile-open {
+  .app-body .sidebar.sidebar-mobile-open {
     transform: translateX(0);
   }
-  /* On mobile, force expanded width when open */
-  .sidebar.sidebar-mobile-open.sidebar-collapsed {
+  /* On mobile, force a usable drawer width whether collapsed or expanded */
+  .app-body .sidebar.sidebar-mobile-open {
     width: 260px;
   }
   /* Hide toggle button on mobile — the drawer is closed via backdrop */
