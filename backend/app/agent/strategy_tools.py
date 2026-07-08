@@ -242,6 +242,9 @@ def _build_shorthand_spec(args: dict) -> dict | None:
         "exit_rules": {
             "tp_pct": float(tp),
             "sl_pct": float(sl),
+            # Absolute premium-point brackets override % when given.
+            "tp_abs": float(args["tp_abs"]) if args.get("tp_abs") else None,
+            "sl_abs": float(args["sl_abs"]) if args.get("sl_abs") else None,
             "exit_at_close": True,
         },
         "risk": {

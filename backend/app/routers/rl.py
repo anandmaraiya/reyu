@@ -280,6 +280,10 @@ async def evaluate(
         description="Override the policy's TP %"),
     stop_pct: float | None = Query(None, gt=0, lt=2,
         description="Override the policy's SL %"),
+    target_abs: float | None = Query(None, gt=0,
+        description="TP as absolute premium points (₹); overrides target_pct"),
+    stop_abs: float | None = Query(None, gt=0,
+        description="SL as absolute premium points (₹); overrides stop_pct"),
     lr: float | None = Query(None, gt=0, lt=1.0,
         description="Override policy learning rate (default 0.05)"),
     epochs: int = Query(1, ge=1, le=20,
@@ -319,6 +323,7 @@ async def evaluate(
             sequential=sequential,
             weight_decay=weight_decay,
             use_real_pricer=use_real_pricer,
+            target_abs=target_abs, stop_abs=stop_abs,
         )
         out.append({
             "underlying": r.underlying,

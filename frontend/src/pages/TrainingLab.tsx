@@ -88,6 +88,9 @@ function BanditTrainer() {
   const [testDays, setTestDays] = useState(30)
   const [targetPct, setTargetPct] = useState(0.25)
   const [stopPct, setStopPct] = useState(0.15)
+  const [bracketMode, setBracketMode] = useState<'pct' | 'abs'>('pct')
+  const [targetAbs, setTargetAbs] = useState(20)
+  const [stopAbs, setStopAbs] = useState(15)
   const [minConv, setMinConv] = useState(0.05)
   const [lr, setLr] = useState(0.10)
   const [epochs, setEpochs] = useState(2)
@@ -105,14 +108,15 @@ function BanditTrainer() {
   async function runEval() {
     setBusy('eval'); setErr(''); setSaved(null)
     try {
-      const q = new URLSearchParams({
+      const p: Record<string, string> = {
         total_days: String(totalDays), test_days: String(testDays),
-        target_pct: String(targetPct), stop_pct: String(stopPct),
         min_conviction: String(minConv), lr: String(lr), epochs: String(epochs),
         starting_capital: String(capital), sequential: 'true',
         use_real_pricer: String(useRealPricer),
-      })
-      const { data } = await api.post(`/api/rl/evaluate?${q}`, symList)
+      }
+      if (bracketMode === 'abs') { p.target_abs = String(targetAbs); p.stop_abs = String(stopAbs) }
+      else { p.target_pct = String(targetPct); p.stop_pct = String(stopPct) }
+      const { data } = await api.post(`/api/rl/evaluate?${new URLSearchParams(p)}`, symList)
       setRows(data.results || [])
     } catch (e: any) {
       setErr(e?.response?.data?.detail || e?.message || 'That didn’t run — please try again.')
@@ -153,12 +157,31 @@ function BanditTrainer() {
         <Field label="Days to test on" tip="test_days — recent days held back as the honest, unseen test.">
           <input style={input} type="number" min={5} max={90} value={testDays} onChange={e => setTestDays(+e.target.value)} />
         </Field>
-        <Field label="Take profit at +%" tip="target_pct — close a trade once it’s up this much.">
-          <input style={input} type="number" step={0.05} value={targetPct} onChange={e => setTargetPct(+e.target.value)} />
+        <Field label="Exit target set by">
+          <select style={input} value={bracketMode} onChange={e => setBracketMode(e.target.value as 'pct' | 'abs')}>
+            <option value="pct">Percent move (%)</option>
+            <option value="abs">Points move (₹)</option>
+          </select>
         </Field>
-        <Field label="Cut loss at −%" tip="stop_pct — close a trade once it’s down this much.">
-          <input style={input} type="number" step={0.05} value={stopPct} onChange={e => setStopPct(+e.target.value)} />
-        </Field>
+        {bracketMode === 'pct' ? (
+          <>
+            <Field label="Take profit at +%" tip="target_pct — close once premium is up this fraction.">
+              <input style={input} type="number" step={0.05} value={targetPct} onChange={e => setTargetPct(+e.target.value)} />
+            </Field>
+            <Field label="Cut loss at −%" tip="stop_pct — close once premium is down this fraction.">
+              <input style={input} type="number" step={0.05} value={stopPct} onChange={e => setStopPct(+e.target.value)} />
+            </Field>
+          </>
+        ) : (
+          <>
+            <Field label="Take profit at +₹ (points)" tip="target_abs — book once premium gains this many points, whatever the entry price.">
+              <input style={input} type="number" step={1} value={targetAbs} onChange={e => setTargetAbs(+e.target.value)} />
+            </Field>
+            <Field label="Cut loss at −₹ (points)" tip="stop_abs — cut once premium loses this many points.">
+              <input style={input} type="number" step={1} value={stopAbs} onChange={e => setStopAbs(+e.target.value)} />
+            </Field>
+          </>
+        )}
         <Field label="Practice money ₹" tip="starting_capital for the return math.">
           <input style={input} type="number" step={10000} value={capital} onChange={e => setCapital(+e.target.value)} />
         </Field>

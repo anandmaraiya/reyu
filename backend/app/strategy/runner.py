@@ -165,6 +165,8 @@ async def _execute_run_inner(run_id: str) -> None:
                        "qty_lots": lg.qty_lots} for lg in spec.legs],
                 target_pct=spec.exit_rules.tp_pct,
                 stop_pct=spec.exit_rules.sl_pct,
+                target_abs=spec.exit_rules.tp_abs,
+                stop_abs=spec.exit_rules.sl_abs,
                 underlying=underlying,
                 seed=seed,
             )
@@ -174,6 +176,8 @@ async def _execute_run_inner(run_id: str) -> None:
                 decide=decide_fn,
                 target_pct=spec.exit_rules.tp_pct,
                 stop_pct=spec.exit_rules.sl_pct,
+                target_abs=spec.exit_rules.tp_abs,
+                stop_abs=spec.exit_rules.sl_abs,
                 underlying=underlying,
                 seed=seed,
             )

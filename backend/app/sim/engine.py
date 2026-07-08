@@ -160,6 +160,8 @@ def simulate_session(
     bs_dte_days: float = 3.0,
     iv_floor: float = 0.05,
     seed: int | None = None,
+    target_abs: float | None = None,
+    stop_abs: float | None = None,
 ) -> list[SimTrade]:
     """No-concurrent simulator: at most one open trade at a time.
 
@@ -194,8 +196,9 @@ def simulate_session(
             idx += 1
             continue
 
-        tp_prem = entry_prem * (1 + target_pct)
-        sl_prem = entry_prem * (1 - stop_pct)
+        # Absolute-move brackets override % when provided.
+        tp_prem = (entry_prem + target_abs) if target_abs else entry_prem * (1 + target_pct)
+        sl_prem = max((entry_prem - stop_abs) if stop_abs else entry_prem * (1 - stop_pct), 0.05)
         status = "TIMEOUT"
         exit_prem = entry_prem
         exit_idx = idx
@@ -251,6 +254,8 @@ def simulate_session_multileg(
     bs_dte_days: float = 3.0,
     iv_floor: float = 0.05,
     seed: int | None = None,
+    target_abs: float | None = None,
+    stop_abs: float | None = None,
 ) -> list[SimTrade]:
     """Multi-leg intraday simulator — prices EVERY leg per bar and tracks the
     combined position, so real spreads (bull-put, iron-condor, ratio, …) are
@@ -327,9 +332,13 @@ def simulate_session_multileg(
             if pnl_pct_now < max_adv: max_adv = pnl_pct_now
             exit_idx = j
             final_pnl = pnl
-            if pnl >= target_pct * basis:
+            # Absolute brackets act on the net premium move directly; % scales
+            # off the net entry basis.
+            tp_hit = pnl >= (target_abs if target_abs else target_pct * basis)
+            sl_hit = pnl <= -(stop_abs if stop_abs else stop_pct * basis)
+            if tp_hit:
                 status = "TP"; break
-            if pnl <= -stop_pct * basis:
+            if sl_hit:
                 status = "SL"; break
 
         pnl_pct = final_pnl / basis * 100

@@ -152,6 +152,14 @@ class EntryRules(BaseModel):
 class ExitRules(BaseModel):
     tp_pct: float = Field(..., gt=0, lt=2)
     sl_pct: float = Field(..., gt=0, lt=2)
+    # Absolute-move brackets in premium points (₹). When set they OVERRIDE the
+    # % brackets: exit when the (net) premium GAINS tp_abs or LOSES sl_abs,
+    # regardless of entry price. Lets users say "book +20 pts / cut -15 pts"
+    # instead of a percentage. The % fields stay as the fallback.
+    tp_abs: float | None = Field(None, gt=0, le=100000,
+        description="Take-profit as an absolute premium move (points/₹); overrides tp_pct")
+    sl_abs: float | None = Field(None, gt=0, le=100000,
+        description="Stop-loss as an absolute premium move (points/₹); overrides sl_pct")
     time_stop_minutes: int | None = Field(None, ge=1, le=1440)
     exit_at_close: bool = True
     # Multi-day holds (EQUITY_EOD; ignored by intraday kinds).

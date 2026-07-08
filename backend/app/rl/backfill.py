@@ -168,6 +168,8 @@ async def _simulate_session(
     lr: float | None = None,
     weight_decay: float = 0.0,
     lot_size: int = 1,
+    target_abs: float | None = None,
+    stop_abs: float | None = None,
 ) -> tuple[list[dict], int, int, int, float]:
     """Replay one trading day. Returns (trade_dicts, wins, losses, timeouts, cum_reward)."""
     if len(candles_5m) < 10:
@@ -198,8 +200,9 @@ async def _simulate_session(
         entry_prem = bs_price(spot_entry, strike, T_entry, 0.07, iv, opt)
         if entry_prem <= 0.5:               # too cheap → ratio noise, skip
             continue
-        tp_prem = entry_prem * (1 + target_pct)
-        sl_prem = entry_prem * (1 - stop_pct)
+        # Absolute premium-point brackets override % when set.
+        tp_prem = (entry_prem + target_abs) if target_abs else entry_prem * (1 + target_pct)
+        sl_prem = max((entry_prem - stop_abs) if stop_abs else entry_prem * (1 - stop_pct), 0.05)
 
         status = "TIMEOUT"; exit_prem = entry_prem
         for j in range(idx + 1, min(idx + 30, len(candles_5m))):     # max 30 bars = 2.5h
@@ -327,6 +330,8 @@ def _seq_simulate_session(
     seed: int | None = None,
     pricer=None,                          # optional real-data pricer
     lot_size: int = 1,
+    target_abs: float | None = None,
+    stop_abs: float | None = None,
 ) -> list[dict]:
     """RL-side decider: in train mode uses ε-greedy + on_close hook
     to call Policy.update(); in test mode is greedy + conviction filter.
@@ -365,6 +370,10 @@ def _seq_simulate_session(
     )
     if pricer is not None:
         sim_kwargs["pricer"] = pricer
+    if target_abs is not None:
+        sim_kwargs["target_abs"] = target_abs
+    if stop_abs is not None:
+        sim_kwargs["stop_abs"] = stop_abs
     sim_trades = _engine_simulate_session(candles_5m, **sim_kwargs)
     # Preserve old dict-shaped contract for callers in train_test_underlying.
     # `reward` is re-expressed in money units (matches what the policy trained
@@ -512,6 +521,8 @@ async def train_test_underlying(
     sequential: bool = True,
     weight_decay: float = 0.0,
     use_real_pricer: bool = False,
+    target_abs: float | None = None,
+    stop_abs: float | None = None,
 ) -> TrainTestResult:
     """End-to-end evaluation:
         1. Wipe the policy.
@@ -600,7 +611,7 @@ async def train_test_underlying(
                     candles, pol, target_pct, stop_pct, eps, underlying,
                     min_conviction=min_conviction, train=True, lr=lr,
                     weight_decay=weight_decay, pricer=session_pricer,
-                    lot_size=lot_size,
+                    lot_size=lot_size, target_abs=target_abs, stop_abs=stop_abs,
                 )
                 if cache:
                     pricer_coverage["real_hits"] += cache.real_hits
@@ -610,6 +621,7 @@ async def train_test_underlying(
                     candles, pol, target_pct, stop_pct, eps, underlying,
                     min_conviction=min_conviction, lr=lr,
                     weight_decay=weight_decay, lot_size=lot_size,
+                    target_abs=target_abs, stop_abs=stop_abs,
                 )
             ep_trades.extend(tr)
         # Only retain the last epoch's trades for stats reporting
@@ -634,7 +646,7 @@ async def train_test_underlying(
             tr = _seq_simulate_session(
                 candles, pol, target_pct, stop_pct, 0.0, underlying,
                 min_conviction=min_conviction, train=False,
-                pricer=session_pricer, lot_size=lot_size,
+                pricer=session_pricer, lot_size=lot_size, target_abs=target_abs, stop_abs=stop_abs,
             )
             if cache:
                 pricer_coverage["real_hits"] += cache.real_hits
@@ -643,6 +655,7 @@ async def train_test_underlying(
             tr, _w, _l, _to, _r = await _simulate_session(
                 candles, pol, target_pct, stop_pct, 0.0, underlying,
                 min_conviction=min_conviction, lot_size=lot_size,
+                target_abs=target_abs, stop_abs=stop_abs,
             )
         test_trades_all.extend(tr)
 
